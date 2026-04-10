@@ -2,6 +2,16 @@
 
 A Python-based scraper for monitoring Pokémon Trading Card Game (TCG) inventory across major Australian retailers.
 
+## 🚀 Live Demo
+
+🌐 **Live Dashboard:** https://toms-mac-mini.tailb83730.ts.net/
+
+The dashboard shows real-time inventory from all retailers, updated hourly. You can see:
+- Current in-stock items
+- Prices and availability
+- Retailer comparison
+- Historical data trends
+
 ## Features
 
 - **Multi-retailer support**: JB Hi-Fi, Target, Kmart, Big W
@@ -10,6 +20,7 @@ A Python-based scraper for monitoring Pokémon Trading Card Game (TCG) inventory
 - **Automated runs**: Scheduled checks with logging
 - **Discord integration**: Notifications for new stock
 - **Web dashboard**: Real-time inventory visualization
+  - **Live URL**: https://toms-mac-mini.tailb83730.ts.net/
 
 ## Retailers Covered
 
@@ -74,7 +85,8 @@ python notify_discord.py
 ```
 
 ### View dashboard:
-Open `dashboard.html` in your browser to see real-time inventory.
+- **Local**: Open `dashboard.html` in your browser
+- **Live**: Visit https://toms-mac-mini.tailb83730.ts.net/
 
 ### Schedule automated runs:
 Add to crontab for hourly checks:
@@ -102,7 +114,7 @@ tcg-scraper/
 ├── scrape_bigw.py            # Big W scraper
 ├── run_all.py                # Orchestrator to run all scrapers
 ├── notify_discord.py         # Discord notification handler
-├── dashboard.html            # Web dashboard
+├── dashboard.html            # Web dashboard (live at https://toms-mac-mini.tailb83730.ts.net/)
 ├── dashboard.css             # Dashboard styles
 ├── dashboard.js              # Dashboard JavaScript
 ├── README.md                 # This file
