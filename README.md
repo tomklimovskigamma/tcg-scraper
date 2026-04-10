@@ -9,6 +9,7 @@ A Python-based scraper for monitoring Pokémon Trading Card Game (TCG) inventory
 - **Just-landed detection**: Get alerts when new items arrive
 - **Automated runs**: Scheduled checks with logging
 - **Discord integration**: Notifications for new stock
+- **Web dashboard**: Real-time inventory visualization
 
 ## Retailers Covered
 
@@ -42,36 +43,54 @@ pip install -r requirements.txt
 
 ### Run all scrapers:
 ```bash
-python run_scrapers_and_check.py
+python run_all.py
 ```
 
 ### Run individual scrapers:
 ```bash
-python jb_pokemon_scraper.py
+python scrape_jbhifi.py
+python scrape_target.py
+python scrape_kmart.py
+python scrape_bigw.py
 ```
+
+### Send Discord notifications:
+```bash
+python notify_discord.py
+```
+
+### View dashboard:
+Open `dashboard.html` in your browser to see real-time inventory.
 
 ### Schedule automated runs:
 Add to crontab for hourly checks:
 ```bash
-0 * * * * cd /path/to/tcg-scraper && python run_scrapers_and_check.py >> run_log.txt 2>&1
+0 * * * * cd /path/to/tcg-scraper && python run_all.py >> run_log.txt 2>&1
 ```
 
 ## Output
 
 The scraper generates:
-- `inventory.json`: JSON data for all retailers
-- `inventory.js`: JavaScript version for web display
-- `run_log.txt`: Log of all runs and findings
+- `data/` directory with retailer-specific JSON files
+- `dashboard.html` with real-time inventory visualization
+- Discord notifications for new stock
 
 ## Project Structure
 
 ```
 tcg-scraper/
-├── jb_pokemon_scraper.py      # Main scraper script
-├── run_scrapers_and_check.py  # Orchestrator with just-landed detection
-├── README.md                  # This file
-├── requirements.txt           # Python dependencies
-└── run_log.txt               # Execution log (generated)
+├── scrape_jbhifi.py      # JB Hi-Fi scraper
+├── scrape_target.py      # Target scraper
+├── scrape_kmart.py       # Kmart scraper
+├── scrape_bigw.py        # Big W scraper
+├── run_all.py            # Orchestrator to run all scrapers
+├── notify_discord.py     # Discord notification handler
+├── dashboard.html        # Web dashboard
+├── dashboard.css         # Dashboard styles
+├── dashboard.js          # Dashboard JavaScript
+├── README.md             # This file
+├── requirements.txt      # Python dependencies
+└── .gitignore           # Git ignore rules
 ```
 
 ## Dependencies

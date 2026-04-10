@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pokémon TCG Stock Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <div class="header-title">
+        <span class="header-icon">⚡</span>
+        <div>
+          <h1>Pokémon TCG Tracker</h1>
+          <p class="sub">Live stock across JB Hi-Fi, Target, Kmart &amp; Big W</p>
+        </div>
+      </div>
+      <p id="meta" class="meta"></p>
+    </div>
+    <p id="error" class="error" hidden></p>
+  </header>
+
+  <main>
+
+    <section class="panel panel-landed" id="justLandedSection">
+      <div class="panel-landed-header">
+        <div class="landed-title-row">
+          <span class="landed-icon">🆕</span>
+          <h2>Just landed</h2>
+          <span id="landedCount" class="badge badge-landed"></span>
+        </div>
+        <p class="hint">New items that weren't in stock last time the scraper ran.</p>
+      </div>
+      <div id="landedEmpty" class="landed-empty" hidden>
+        <span class="landed-empty-icon">✓</span>
+        No new stock since the last refresh — check back soon.
+      </div>
+      <div class="table-wrap" id="landedTableWrap" hidden>
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Store</th>
+              <th>Price</th>
+              <th>SKU</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="landedBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="toolbar">
+      <div class="store-toggles">
+        <span class="controls-label">Stores</span>
+        <button class="store-toggle active" data-source="jbhifi">
+          <span class="toggle-dot"></span>JB Hi-Fi
+        </button>
+        <button class="store-toggle active" data-source="target">
+          <span class="toggle-dot"></span>Target
+        </button>
+                    <button class="store-toggle active" data-source="kmart">
+          <span class="toggle-dot"></span>Kmart
+        </button>
+        <button class="store-toggle active" data-source="bigw">
+          <span class="toggle-dot"></span>Big W
+        </button>
+      </div>
+      <div class="stat-chips">
+        <span class="stat-chip" id="chipIn">
+          <span class="chip-dot chip-dot-green"></span>
+          <span id="inCount">0</span> in stock
+        </span>
+        <span class="stat-chip" id="chipPre" style="display:none">
+          <span class="chip-dot chip-dot-blue"></span>
+          <span id="preCount">0</span> pre-order
+        </span>
+        <span class="stat-chip" id="chipOos">
+          <span class="chip-dot chip-dot-grey"></span>
+          <span id="oosCount">0</span> out of stock
+        </span>
+      </div>
+    </div>
+
+    <section class="panel" id="inStockSection">
+      <h2>In stock</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Store</th>
+              <th>Price</th>
+              <th>SKU</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="inStockBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel panel-oos" id="oosSection">
+      <h2>Out of stock</h2>
+      <p class="hint">Shown for reference — stock changes frequently.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Store</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="oosBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    Refresh + notify: <code>python3 run_all.py</code> &nbsp;·&nbsp;
+    Serve: <code>python3 -m http.server 8090</code>
+  </footer>
+
+  <script src="data/inventory.js"></script>
+  <script src="data/target_inventory.js"></script>
+  <script src="data/kmart_inventory.js"></script>
+  <script src="data/bigw_inventory.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
