@@ -194,10 +194,12 @@ For questions or support, open an issue on GitHub.
 ## Recent Updates (April 2026)
 
 1. **Dashboard Rename** - Changed from `dashboard.html` to `tcg_scraper_dashboard.html` for clarity
-2. **Fixed notification logic** - Now supports `--include-in-stock` flag
-3. **Added retry logic** - Exponential backoff for rate limiting
-4. **Improved error handling** - Better parsing and validation
-5. **Enhanced logging** - More detailed run logs
-6. **Added health checks** - Diagnostic tools for troubleshooting
-7. **Schedule automation** - Configured for 9am-5pm runs every 30 minutes
-8. **Discord integration** - Real-time notifications to #tcg channel
+2. **Schedule Update** - Changed from 9am-5pm to **7am-5pm** runs
+3. **Recently Added Section** - Changed "Just Landed" to "Recently Added (Last 12 Hours)"
+4. **Fixed notification logic** - Now supports `--include-in-stock` flag
+5. **Added retry logic** - Exponential backoff for rate limiting
+6. **Improved error handling** - Better parsing and validation
+7. **Enhanced logging** - More detailed run logs
+8. **Added health checks** - Diagnostic tools for troubleshooting
+9. **Schedule automation** - Configured for 7am-5pm runs every 30 minutes
+10. **Discord integration** - Real-time notifications to #tcg channel

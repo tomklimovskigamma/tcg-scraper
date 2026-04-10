@@ -1,7 +1,7 @@
 # Pokémon TCG Scraper Schedule Setup
 
 ## 🕐 Schedule Configuration
-The scraper is configured to run **every 30 minutes between 9am-5pm only**.
+The scraper is configured to run **every 30 minutes between 7am-5pm only**.
 
 ## 📋 Manual Cron Setup
 
@@ -20,7 +20,7 @@ crontab -e
 ## 🔧 What This Does
 
 1. **Runs every 30 minutes** (`*/30 * * * *`)
-2. **Checks if within 9am-5pm** (via `schedule_check.sh`)
+2. **Checks if within 7am-5pm** (via `schedule_check.sh`)
 3. **Sends Discord notification** if within business hours
 4. **Skips gracefully** if outside business hours
 5. **Logs all runs** to `cron.log` and `run_log.txt`
@@ -28,12 +28,13 @@ crontab -e
 ## 📅 Schedule Details
 
 **Runs at:**
-- 9:00, 9:30, 10:00, 10:30, 11:00, 11:30
-- 12:00, 12:30, 13:00, 13:30, 14:00, 14:30  
-- 15:00, 15:30, 16:00, 16:30, 17:00
+- 7:00, 7:30, 8:00, 8:30, 9:00, 9:30
+- 10:00, 10:30, 11:00, 11:30, 12:00, 12:30
+- 13:00, 13:30, 14:00, 14:30, 15:00, 15:30  
+- 16:00, 16:30, 17:00
 
 **Skips:**
-- Before 9:00 AM
+- Before 7:00 AM
 - After 5:00 PM
 - Overnight
 
@@ -80,7 +81,7 @@ tail -f /Users/tomklimovski/clawd/run_log.txt
 ## 🎯 Next Run
 
 The next scheduled run will be at:
-- **Tomorrow at 9:00 AM** (if within business hours)
+- **Tomorrow at 7:00 AM** (if within business hours)
 - Or **manually** anytime with `./quick_notify.sh`
 
 ---
