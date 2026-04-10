@@ -6,6 +6,8 @@ A Python-based scraper for monitoring Pokémon Trading Card Game (TCG) inventory
 
 🌐 **Live Dashboard:** https://toms-mac-mini.tailb83730.ts.net/
 
+**Dashboard Name:** TCG Scraper Dashboard
+
 The dashboard shows real-time inventory from all retailers, updated hourly. You can see:
 - Current in-stock items
 - Prices and availability
@@ -20,7 +22,9 @@ The dashboard shows real-time inventory from all retailers, updated hourly. You 
 - **Automated runs**: Scheduled checks with logging
 - **Discord integration**: Notifications for new stock
 - **Web dashboard**: Real-time inventory visualization
+  - **Dashboard Name**: TCG Scraper Dashboard
   - **Live URL**: https://toms-mac-mini.tailb83730.ts.net/
+  - **Local File**: `tcg_scraper_dashboard.html`
 
 ## Retailers Covered
 
@@ -85,8 +89,9 @@ python notify_discord.py
 ```
 
 ### View dashboard:
-- **Local**: Open `dashboard.html` in your browser
+- **Local**: Open `tcg_scraper_dashboard.html` in your browser
 - **Live**: Visit https://toms-mac-mini.tailb83730.ts.net/
+- **Note**: The dashboard has been renamed from `dashboard.html` to `tcg_scraper_dashboard.html` for clarity
 
 ### Schedule automated runs:
 Add to crontab for hourly checks:
@@ -114,9 +119,10 @@ tcg-scraper/
 ├── scrape_bigw.py            # Big W scraper
 ├── run_all.py                # Orchestrator to run all scrapers
 ├── notify_discord.py         # Discord notification handler
-├── dashboard.html            # Web dashboard (live at https://toms-mac-mini.tailb83730.ts.net/)
-├── dashboard.css             # Dashboard styles
-├── dashboard.js              # Dashboard JavaScript
+├── tcg_scraper_dashboard.html # Web dashboard (live at https://toms-mac-mini.tailb83730.ts.net/)
+├── tcg_scraper_dashboard.css  # Dashboard styles
+├── tcg_scraper_dashboard.js   # Dashboard JavaScript
+├── index.html                # Symlink to tcg_scraper_dashboard.html
 ├── README.md                 # This file
 ├── requirements.txt          # Python dependencies
 ├── .gitignore               # Git ignore rules
@@ -185,10 +191,13 @@ Feel free to submit issues and pull requests for additional retailers or improve
 
 For questions or support, open an issue on GitHub.
 
-## Recent Fixes (April 2026)
+## Recent Updates (April 2026)
 
-1. **Fixed notification logic** - Now supports `--include-in-stock` flag
-2. **Added retry logic** - Exponential backoff for rate limiting
-3. **Improved error handling** - Better parsing and validation
-4. **Enhanced logging** - More detailed run logs
-5. **Added health checks** - Diagnostic tools for troubleshooting
+1. **Dashboard Rename** - Changed from `dashboard.html` to `tcg_scraper_dashboard.html` for clarity
+2. **Fixed notification logic** - Now supports `--include-in-stock` flag
+3. **Added retry logic** - Exponential backoff for rate limiting
+4. **Improved error handling** - Better parsing and validation
+5. **Enhanced logging** - More detailed run logs
+6. **Added health checks** - Diagnostic tools for troubleshooting
+7. **Schedule automation** - Configured for 9am-5pm runs every 30 minutes
+8. **Discord integration** - Real-time notifications to #tcg channel
