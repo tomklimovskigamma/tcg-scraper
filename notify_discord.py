@@ -48,8 +48,12 @@ def get_webhook_url() -> str:
     return os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 
 
-def load_just_landed() -> list[dict]:
-    """Collect just_landed items from all store JSON files."""
+def load_items(include_in_stock: bool = False) -> list[dict]:
+    """Collect items from all store JSON files.
+    
+    Args:
+        include_in_stock: If True, include all in-stock items, not just just_landed
+    """
     items: list[dict] = []
     for source_key, path in INVENTORY_FILES.items():
         if not path.exists():
@@ -59,12 +63,22 @@ def load_just_landed() -> list[dict]:
         except (OSError, ValueError):
             continue
         scraped_at = data.get("scraped_at", "")
-        for item in data.get("just_landed") or []:
+        
+        # Get items based on mode
+        if include_in_stock:
+            item_list = data.get("in_stock") or []
+            item_type = "in_stock"
+        else:
+            item_list = data.get("just_landed") or []
+            item_type = "just_landed"
+        
+        for item in item_list:
             items.append({
                 **item,
                 "_source_key": source_key,
                 "_source_name": STORE_LABELS.get(source_key, source_key),
                 "_scraped_at": scraped_at,
+                "_item_type": item_type,
             })
     return items
 
@@ -119,14 +133,17 @@ def build_embeds(items: list[dict]) -> list[dict]:
     return embeds
 
 
-def send_discord(webhook_url: str, items: list[dict]) -> None:
+def send_discord(webhook_url: str, items: list[dict], include_in_stock: bool = False) -> None:
     n = len(items)
     embeds = build_embeds(items)
+    
+    if include_in_stock:
+        content = f"📦 **{n} Pokémon TCG item{'s' if n != 1 else ''} currently in stock!**"
+    else:
+        content = f"🚨 **{n} new Pokémon TCG item{'s' if n != 1 else ''} just landed!**"
 
     payload: dict = {
-        "content": (
-            f"🚨 **{n} new Pokémon TCG item{'s' if n != 1 else ''} just landed!**"
-        ),
+        "content": content,
         "embeds": embeds,
     }
 
@@ -146,6 +163,15 @@ def send_discord(webhook_url: str, items: list[dict]) -> None:
 
 # ── Entry point ─────────────────────────────────────────────────────────────
 def main() -> int:
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Send Discord notifications for Pokémon TCG stock")
+    parser.add_argument("--include-in-stock", action="store_true", 
+                       help="Include all in-stock items, not just just_landed")
+    parser.add_argument("--force", action="store_true",
+                       help="Send notification even if no items found (for testing)")
+    args = parser.parse_args()
+    
     webhook_url = get_webhook_url()
     if not webhook_url:
         print(
@@ -154,16 +180,30 @@ def main() -> int:
         )
         return 1
 
-    items = load_just_landed()
+    items = load_items(include_in_stock=args.include_in_stock)
+    
     if not items:
-        print("No new just_landed items — nothing to notify.")
-        return 0
+        if args.force:
+            print("No items found, but sending test notification due to --force flag")
+            # Send a test notification
+            test_payload = {
+                "content": "✅ Pokémon TCG scraper test notification - System is working!"
+            }
+            resp = requests.post(webhook_url, json=test_payload, timeout=15)
+            resp.raise_for_status()
+            print("Test notification sent.")
+            return 0
+        else:
+            item_type = "in-stock" if args.include_in_stock else "just-landed"
+            print(f"No {item_type} items — nothing to notify.")
+            return 0
 
-    print(f"Found {len(items)} just-landed item(s):")
+    item_type = "in-stock" if args.include_in_stock else "just-landed"
+    print(f"Found {len(items)} {item_type} item(s):")
     for item in items:
         print(f"  [{item.get('_source_name')}] {item.get('title')}")
 
-    send_discord(webhook_url, items)
+    send_discord(webhook_url, items, include_in_stock=args.include_in_stock)
     return 0
 
 
