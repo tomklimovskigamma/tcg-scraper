@@ -20,8 +20,8 @@ if [ "$CURRENT_HOUR" -ge 7 ] && [ "$CURRENT_HOUR" -le 16 ]; then
     echo "Running notification script..."
     echo ""
     
-    # Run the notification script
-    ./quick_notify.sh
+    # Run the notification script with token tracking
+    python3 notify_discord_with_tracking.py
     EXIT_CODE=$?
     
     echo ""
