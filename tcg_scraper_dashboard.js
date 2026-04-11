@@ -16,6 +16,23 @@
     }).format(n);
   }
 
+  function fmtTime(isoString) {
+    if (!isoString) return "unknown";
+    try {
+      const date = new Date(isoString);
+      // Format: "11 Apr 8:31 AM" (date + time)
+      return date.toLocaleString('en-AU', {
+        day: 'numeric',
+        month: 'short',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch (e) {
+      return isoString; // Fallback to raw string
+    }
+  }
+
   function normalizeSource(sourceKey, payload) {
     var sourceName = SOURCE_LABELS[sourceKey] || sourceKey;
     var sourceUrl = (payload && payload.source) || "";
@@ -94,7 +111,7 @@
     errEl.hidden = true;
     errEl.textContent = "";
     metaEl.textContent = [
-      "Last scraped: " + (visible.latest_scraped_at || "unknown"),
+      "Last scraped: " + fmtTime(visible.latest_scraped_at),
       "Sources: " + visible.sources.join(", "),
       visible.products_checked ? visible.products_checked + " products checked" : null,
     ]
