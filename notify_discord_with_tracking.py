@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import uuid
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -131,8 +132,13 @@ def fmt_time(iso_str: str) -> str:
     if not iso_str:
         return "unknown"
     try:
-        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        return dt.strftime("%-d %b %Y %H:%M UTC")
+        # Parse as UTC and convert to Melbourne timezone
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
+        # Convert to Melbourne timezone (AEDT/AEST) using zoneinfo
+        melbourne_tz = ZoneInfo("Australia/Melbourne")
+        melbourne_dt = dt.astimezone(melbourne_tz)
+        # Format with timezone abbreviation
+        return melbourne_dt.strftime("%-d %b %Y %H:%M %Z")
     except Exception:
         return iso_str
 
@@ -185,6 +191,9 @@ def send_discord(webhook_url: str, items: list[dict], include_in_stock: bool = F
         content = f"📦 **{n} Pokémon TCG item{'s' if n != 1 else ''} currently in stock**"
     else:
         content = f"🚨 **{n} new Pokémon TCG item{'s' if n != 1 else ''} just landed!**"
+    
+    # Add dashboard link
+    content += f"\n📊 **Dashboard:** https://toms-mac-mini.tailb83730.ts.net/"
     
     total_message_length += len(content)
     
