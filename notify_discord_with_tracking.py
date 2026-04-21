@@ -120,6 +120,14 @@ def load_items(include_in_stock: bool = False) -> list[dict]:
         if include_in_stock:
             item_list = data.get("in_stock") or []
 
+        # Filter out just_landed items that aren't actually in stock
+        # (fix for data inconsistency bug)
+        if not include_in_stock:
+            in_stock_items = data.get("in_stock") or []
+            in_stock_keys = {item.get("handle") or item.get("title") for item in in_stock_items}
+            item_list = [item for item in item_list 
+                        if (item.get("handle") or item.get("title")) in in_stock_keys]
+
         for item in item_list:
             item["_source_name"] = STORE_LABELS.get(source_key, source_key)
             item["_source_key"] = source_key
@@ -234,6 +242,12 @@ def main() -> int:
 
     # Generate job ID and start tracking
     job_id = generate_job_id()
+    
+    # Log the run
+    import time
+    current_time = time.time()
+    print(f"🚀 Starting notification run: {job_id} at {current_time}")
+    
     if not args.no_tracking:
         start_token_tracking(job_id, "scraper_notification")
 

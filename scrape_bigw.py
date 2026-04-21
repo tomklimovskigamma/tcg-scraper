@@ -249,8 +249,16 @@ def main() -> int:
             "errors": 0,
         },
     }
-    payload["just_landed"] = compute_just_landed(payload, previous_payload)
-    payload["totals"]["just_landed"] = len(payload["just_landed"])
+    # Compute just_landed items
+    just_landed = compute_just_landed(payload, previous_payload)
+    
+    # Filter to ensure just_landed items are actually in in_stock
+    # (fix for data inconsistency bug)
+    in_stock_keys = {row_key(p) for p in (payload.get("in_stock") or [])}
+    just_landed = [p for p in just_landed if row_key(p) in in_stock_keys]
+    
+    payload["just_landed"] = just_landed
+    payload["totals"]["just_landed"] = len(just_landed)
 
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(
