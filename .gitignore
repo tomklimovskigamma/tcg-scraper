@@ -42,3 +42,9 @@ inventory.json
 inventory.js
 run_log.txt
 *.log
+
+# Secrets
+# Local-only Discord webhook URL. Never commit this: the URL is a bearer
+# credential, and anyone holding it can post to the channel.
+discord_webhook.txt
+.env
