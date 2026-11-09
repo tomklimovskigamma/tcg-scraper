@@ -12,7 +12,8 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -70,7 +71,13 @@ EXCLUDE_TITLE_SUBSTRINGS = (
     "puzzle",
     "activity",
     "sticker",
+    "toolkit",
+    " battle academy",
+    
+    "deck protector",
 )
+
+LANDING_TTL = timedelta(hours=12)
 
 
 def session() -> requests.Session:
@@ -95,7 +102,8 @@ def parse_search_meta_products(html: str) -> list[dict]:
 def fetch_product_js(sess: requests.Session, handle: str) -> dict | None:
     url = f"{BASE}/products/{handle}.js"
     try:
-        r = sess.get(url, timeout=30)
+        # Use plain requests.get here so threaded fetches do not share one Session object.
+        r = requests.get(url, headers=sess.headers, timeout=20)
         if r.status_code != 200:
             return None
         return r.json()
@@ -147,26 +155,33 @@ def product_row(handle: str, js: dict) -> dict:
     price = price_cents_to_aud(js.get("price"))
     variants = js.get("variants") or []
     any_avail = bool(js.get("available"))
+    first_avail = next((v for v in variants if v.get("available")), variants[0] if variants else None)
+    variant_id = first_avail.get("id") if first_avail else None
+    cart_url = f"{BASE}/cart/{variant_id}:1" if variant_id else None
     return {
         "handle": handle,
         "title": js.get("title") or handle,
         "url": f"{BASE}{js.get('url') or '/products/' + handle}",
+        "cart_url": cart_url,
+        "variant_id": variant_id,
         "vendor": js.get("vendor"),
         "product_type": js.get("type"),
         "available": any_avail,
         "price_aud": price,
-        "sku": variants[0].get("sku") if variants else None,
+        "sku": (first_avail or {}).get("sku") if first_avail else None,
         "variant_available": [v.get("available", False) for v in variants],
     }
 
 
 def run(
     queries: list[str],
-    delay: float,
+    search_delay: float,
+    product_delay: float,
+    workers: int,
     tcg_focus: bool,
     sess: requests.Session,
 ) -> dict:
-    handles: set[str] = set()
+    product_seeds: dict[str, dict] = {}
     for q in queries:
         url = f"{SEARCH_URL}?q={quote_plus(q)}"
         r = sess.get(url, timeout=45)
@@ -174,33 +189,55 @@ def run(
         for p in parse_search_meta_products(r.text):
             h = p.get("handle")
             if h:
-                handles.add(h)
-        if delay > 0:
-            time.sleep(delay)
+                product_seeds[h] = p
+        if search_delay > 0:
+            time.sleep(search_delay)
 
     in_stock: list[dict] = []
     out_of_stock: list[dict] = []
     excluded: list[dict] = []
     errors: list[dict] = []
 
-    for handle in sorted(handles):
-        if delay > 0:
-            time.sleep(delay)
-        js = fetch_product_js(sess, handle)
-        if not js:
-            errors.append({"handle": handle, "error": "failed to load product .js"})
+    handles = sorted(product_seeds.keys())
+    to_fetch: list[str] = []
+    for handle in handles:
+        seed = product_seeds.get(handle, {})
+        seed_title = seed.get("title") or handle
+        seed_vendor = seed.get("vendor") or ""
+        seed_type = seed.get("type") or ""
+        if tcg_focus and not is_card_related(seed_title, seed_vendor, seed_type):
+            excluded.append(
+                {"handle": handle, "title": seed_title, "reason": "not classified as Pokémon TCG / cards"}
+            )
             continue
-        title = js.get("title") or handle
-        vendor = js.get("vendor") or ""
-        ptype = js.get("type") or ""
-        if tcg_focus and not is_card_related(title, vendor, ptype):
-            excluded.append({"handle": handle, "title": title, "reason": "not classified as Pokémon TCG / cards"})
-            continue
-        row = product_row(handle, js)
-        if row["available"]:
-            in_stock.append(row)
-        else:
-            out_of_stock.append(row)
+        to_fetch.append(handle)
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {pool.submit(fetch_product_js, sess, handle): handle for handle in to_fetch}
+        for future in as_completed(futures):
+            handle = futures[future]
+            if product_delay > 0:
+                time.sleep(product_delay)
+            try:
+                js = future.result()
+            except Exception:
+                js = None
+            if not js:
+                errors.append({"handle": handle, "error": "failed to load product .js"})
+                continue
+            title = js.get("title") or handle
+            vendor = js.get("vendor") or ""
+            ptype = js.get("type") or ""
+            if tcg_focus and not is_card_related(title, vendor, ptype):
+                excluded.append(
+                    {"handle": handle, "title": title, "reason": "not classified as Pokémon TCG / cards"}
+                )
+                continue
+            row = product_row(handle, js)
+            if row["available"]:
+                in_stock.append(row)
+            else:
+                out_of_stock.append(row)
 
     in_stock.sort(key=lambda x: (x["title"] or "").lower())
     out_of_stock.sort(key=lambda x: (x["title"] or "").lower())
@@ -214,7 +251,7 @@ def run(
         "excluded": excluded,
         "errors": errors,
         "totals": {
-            "handles_discovered": len(handles),
+            "handles_discovered": len(product_seeds),
             "in_stock": len(in_stock),
             "out_of_stock": len(out_of_stock),
             "excluded": len(excluded),
@@ -247,6 +284,55 @@ def compute_just_landed(current_payload: dict, previous_payload: dict) -> list[d
     return just_landed
 
 
+def parse_iso(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def keep_recent_just_landed(
+    current_payload: dict,
+    previous_payload: dict,
+    now: datetime,
+) -> list[dict]:
+    current_in_stock = current_payload.get("in_stock") or []
+    current_by_key = {row_key(p): p for p in current_in_stock}
+    merged: dict[str, dict] = {}
+
+    for item in previous_payload.get("just_landed") or []:
+        landed_at = parse_iso(item.get("landed_at"))
+        if not landed_at:
+            continue
+        if now - landed_at > LANDING_TTL:
+            continue
+        key = row_key(item)
+        if key in current_by_key:
+            promoted = dict(current_by_key[key])
+            promoted["landed_at"] = item.get("landed_at")
+            merged[key] = promoted
+        else:
+            merged[key] = item
+
+    for item in current_payload.get("just_landed") or []:
+        key = row_key(item)
+        promoted = dict(item)
+        promoted["landed_at"] = now.isoformat()
+        merged[key] = promoted
+
+    rows = list(merged.values())
+    rows.sort(
+        key=lambda x: (
+            parse_iso(x.get("landed_at")) or datetime.min.replace(tzinfo=timezone.utc),
+            (x.get("title") or "").lower(),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="JB Hi-Fi Pokémon cards stock scraper")
     ap.add_argument(
@@ -256,7 +342,14 @@ def main() -> int:
         help="Extra search phrases (in addition to built-in list)",
     )
     ap.add_argument("--queries-only", nargs="+", help="Use only these queries (replace defaults)")
-    ap.add_argument("--delay", type=float, default=0.35, help="Seconds between HTTP requests")
+    ap.add_argument("--delay", type=float, default=0.15, help="Seconds between search requests")
+    ap.add_argument(
+        "--product-delay",
+        type=float,
+        default=0.0,
+        help="Optional delay between completed product requests",
+    )
+    ap.add_argument("--workers", type=int, default=10, help="Parallel workers for product .js fetches")
     ap.add_argument(
         "--no-tcg-filter",
         action="store_true",
@@ -289,7 +382,9 @@ def main() -> int:
         sess = session()
         payload = run(
             queries=queries,
-            delay=max(0.0, args.delay),
+            search_delay=max(0.0, args.delay),
+            product_delay=max(0.0, args.product_delay),
+            workers=max(1, args.workers),
             tcg_focus=not args.no_tcg_filter,
             sess=sess,
         )
@@ -297,16 +392,10 @@ def main() -> int:
         print(f"Request failed: {e}", file=sys.stderr)
         return 1
 
-    # Compute just_landed items
-    just_landed = compute_just_landed(payload, previous_payload)
-    
-    # Filter to ensure just_landed items are actually in in_stock
-    # (fix for data inconsistency bug)
-    in_stock_keys = {row_key(p) for p in (payload.get("in_stock") or [])}
-    just_landed = [p for p in just_landed if row_key(p) in in_stock_keys]
-    
-    payload["just_landed"] = just_landed
-    payload["totals"]["just_landed"] = len(just_landed)
+    payload["just_landed"] = compute_just_landed(payload, previous_payload)
+    now = datetime.now(timezone.utc)
+    payload["just_landed"] = keep_recent_just_landed(payload, previous_payload, now)
+    payload["totals"]["just_landed"] = len(payload["just_landed"])
 
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(

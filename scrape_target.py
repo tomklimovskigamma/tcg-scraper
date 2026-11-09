@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -62,7 +62,13 @@ EXCLUDE_TITLE_SUBSTRINGS = (
     " book",         # books (e.g. "Battle Collection - Book")
     "guidebook",
     "handbook",
+    "toolkit",
+    " battle academy",
+    
+    "deck protector",
 )
+
+LANDING_TTL = timedelta(hours=12)
 
 
 def session() -> requests.Session:
@@ -246,6 +252,51 @@ def compute_just_landed(current_payload: dict, previous_payload: dict) -> list[d
     return just_landed
 
 
+def parse_iso(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def keep_recent_just_landed(current_payload: dict, previous_payload: dict, now: datetime) -> list[dict]:
+    current_in_stock = current_payload.get("in_stock") or []
+    current_by_key = {row_key(p): p for p in current_in_stock}
+    merged: dict[str, dict] = {}
+
+    for item in previous_payload.get("just_landed") or []:
+        landed_at = parse_iso(item.get("landed_at"))
+        if not landed_at:
+            continue
+        if now - landed_at > LANDING_TTL:
+            continue
+        key = row_key(item)
+        if key in current_by_key:
+            promoted = dict(current_by_key[key])
+            promoted["landed_at"] = item.get("landed_at")
+            merged[key] = promoted
+        else:
+            merged[key] = item
+
+    for item in current_payload.get("just_landed") or []:
+        key = row_key(item)
+        promoted = dict(item)
+        promoted["landed_at"] = now.isoformat()
+        merged[key] = promoted
+
+    rows = list(merged.values())
+    rows.sort(
+        key=lambda x: (
+            parse_iso(x.get("landed_at")) or datetime.min.replace(tzinfo=timezone.utc),
+            (x.get("title") or "").lower(),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Target Australia Pokemon cards stock scraper")
     ap.add_argument(
@@ -298,16 +349,10 @@ def main() -> int:
         print(f"Request failed: {e}", file=sys.stderr)
         return 1
 
-    # Compute just_landed items
-    just_landed = compute_just_landed(payload, previous_payload)
-    
-    # Filter to ensure just_landed items are actually in in_stock
-    # (fix for data inconsistency bug)
-    in_stock_keys = {row_key(p) for p in (payload.get("in_stock") or [])}
-    just_landed = [p for p in just_landed if row_key(p) in in_stock_keys]
-    
-    payload["just_landed"] = just_landed
-    payload["totals"]["just_landed"] = len(just_landed)
+    payload["just_landed"] = compute_just_landed(payload, previous_payload)
+    now = datetime.now(timezone.utc)
+    payload["just_landed"] = keep_recent_just_landed(payload, previous_payload, now)
+    payload["totals"]["just_landed"] = len(payload["just_landed"])
 
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(
