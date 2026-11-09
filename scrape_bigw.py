@@ -8,11 +8,13 @@ Rules:
   - Non-Pokemon TCG items are filtered out.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -80,7 +82,13 @@ EXCLUDE_TITLE_SUBSTRINGS = (
     "holder case",
     "playmat",
     "portfo",
+    "toolkit",
+    " battle academy",
+    
+    "deck protector",
 )
+
+LANDING_TTL = timedelta(hours=12)
 
 
 def slugify(name: str) -> str:
@@ -214,6 +222,51 @@ def compute_just_landed(current_payload: dict, previous_payload: dict) -> list[d
     return just_landed
 
 
+def parse_iso(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def keep_recent_just_landed(current_payload: dict, previous_payload: dict, now: datetime) -> list[dict]:
+    current_in_stock = current_payload.get("in_stock") or []
+    current_by_key = {row_key(p): p for p in current_in_stock}
+    merged: dict[str, dict] = {}
+
+    for item in previous_payload.get("just_landed") or []:
+        landed_at = parse_iso(item.get("landed_at"))
+        if not landed_at:
+            continue
+        if now - landed_at > LANDING_TTL:
+            continue
+        key = row_key(item)
+        if key in current_by_key:
+            promoted = dict(current_by_key[key])
+            promoted["landed_at"] = item.get("landed_at")
+            merged[key] = promoted
+        else:
+            merged[key] = item
+
+    for item in current_payload.get("just_landed") or []:
+        key = row_key(item)
+        promoted = dict(item)
+        promoted["landed_at"] = now.isoformat()
+        merged[key] = promoted
+
+    rows = list(merged.values())
+    rows.sort(
+        key=lambda x: (
+            parse_iso(x.get("landed_at")) or datetime.min.replace(tzinfo=timezone.utc),
+            (x.get("title") or "").lower(),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Big W Pokémon TCG scraper")
     ap.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "data")
@@ -250,6 +303,8 @@ def main() -> int:
         },
     }
     payload["just_landed"] = compute_just_landed(payload, previous_payload)
+    now = datetime.now(timezone.utc)
+    payload["just_landed"] = keep_recent_just_landed(payload, previous_payload, now)
     payload["totals"]["just_landed"] = len(payload["just_landed"])
 
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

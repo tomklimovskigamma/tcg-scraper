@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import uuid
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -119,6 +120,14 @@ def load_items(include_in_stock: bool = False) -> list[dict]:
         if include_in_stock:
             item_list = data.get("in_stock") or []
 
+        # Filter out just_landed items that aren't actually in stock
+        # (fix for data inconsistency bug)
+        if not include_in_stock:
+            in_stock_items = data.get("in_stock") or []
+            in_stock_keys = {item.get("handle") or item.get("title") for item in in_stock_items}
+            item_list = [item for item in item_list 
+                        if (item.get("handle") or item.get("title")) in in_stock_keys]
+
         for item in item_list:
             item["_source_name"] = STORE_LABELS.get(source_key, source_key)
             item["_source_key"] = source_key
@@ -131,8 +140,13 @@ def fmt_time(iso_str: str) -> str:
     if not iso_str:
         return "unknown"
     try:
-        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        return dt.strftime("%-d %b %Y %H:%M UTC")
+        # Parse as UTC and convert to Melbourne timezone
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
+        # Convert to Melbourne timezone (AEDT/AEST) using zoneinfo
+        melbourne_tz = ZoneInfo("Australia/Melbourne")
+        melbourne_dt = dt.astimezone(melbourne_tz)
+        # Format with timezone abbreviation
+        return melbourne_dt.strftime("%-d %b %Y %H:%M %Z")
     except Exception:
         return iso_str
 
@@ -186,6 +200,9 @@ def send_discord(webhook_url: str, items: list[dict], include_in_stock: bool = F
     else:
         content = f"🚨 **{n} new Pokémon TCG item{'s' if n != 1 else ''} just landed!**"
     
+    # Add dashboard link
+    content += f"\n📊 **Dashboard:** https://toms-mac-mini.tailb83730.ts.net/"
+    
     total_message_length += len(content)
     
     payload = {
@@ -225,6 +242,12 @@ def main() -> int:
 
     # Generate job ID and start tracking
     job_id = generate_job_id()
+    
+    # Log the run
+    import time
+    current_time = time.time()
+    print(f"🚀 Starting notification run: {job_id} at {current_time}")
+    
     if not args.no_tracking:
         start_token_tracking(job_id, "scraper_notification")
 

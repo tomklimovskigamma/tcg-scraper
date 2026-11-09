@@ -479,7 +479,15 @@ def main() -> int:
         return 1
 
     # Compute just_landed
-    payload["just_landed"] = compute_just_landed(payload, previous_payload)
+    # Compute just_landed items
+    just_landed = compute_just_landed(payload, previous_payload)
+    
+    # Filter to ensure just_landed items are actually in in_stock
+    # (fix for data inconsistency bug)
+    in_stock_keys = {row_key(p) for p in (payload.get("in_stock") or [])}
+    just_landed = [p for p in just_landed if row_key(p) in in_stock_keys]
+    
+    payload["just_landed"] = just_landed
 
     # Write JSON
     json_path.write_text(json.d
