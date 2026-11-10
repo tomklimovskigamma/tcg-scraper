@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -19,9 +20,16 @@ def webhook_url(root: Path) -> str:
     return url
 
 
+_MENTION = re.compile(r"<@(\d{5,25})>")
+
+
 def post(url: str, content: str) -> None:
-    """Send one message. Raises on failure. Waits out Discord's own rate limit."""
-    data = json.dumps({"content": content, "allowed_mentions": {"parse": []}}).encode()
+    """Send one message. Raises on failure. Waits out Discord's own rate limit.
+
+    Only explicit `<@id>` user mentions notify anyone; @everyone, @here and roles never do.
+    """
+    users = sorted(set(_MENTION.findall(content)))[:100]
+    data = json.dumps({"content": content, "allowed_mentions": {"parse": [], "users": users}}).encode()
     for attempt in range(4):
         req = urllib.request.Request(
             url, data=data, method="POST",

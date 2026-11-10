@@ -155,3 +155,44 @@ def load_watchlist(path: Path) -> Watchlist:
         return parse_watchlist(path.read_text(encoding="utf-8"))
     except OSError:
         return Watchlist()
+
+
+# ── personal watches ────────────────────────────────────────────────────────
+# Words that describe the product type or are filler; the rest of a watch must appear in the title.
+_WATCH_FILLER = {
+    "pokemon", "tcg", "trading", "card", "cards", "game", "the", "a", "an", "any", "for", "of", "and",
+    "elite", "trainer", "etb", "etbs", "box", "boxes", "booster", "boosters", "bundle", "bundles", "pack",
+    "packs", "tin", "tins", "collection", "collections", "blister", "blisters", "deck", "decks", "sleeved",
+    "display", "premium",
+}
+
+
+def parse_watch(text: str) -> tuple:
+    """A watch request -> (terms, ptype). `terms` are the words a title must contain;
+    `ptype` is the product type the request names, or None for any type."""
+    norm = normalize(text)
+    padded = f" {norm} "
+    for plural, singular in ((" etbs ", " etb "), (" boxes ", " box "), (" bundles ", " bundle "), (" tins ", " tin "),
+                             (" decks ", " deck "), (" blisters ", " blister "), (" boosters ", " booster "),
+                             (" packs ", " pack "), (" collections ", " collection ")):
+        padded = padded.replace(plural, singular)
+    ptype = None
+    for name, keys in _TYPE_RULES:
+        if any(k in padded for k in keys):
+            ptype = name
+            break
+    terms = [w for w in norm.split() if w not in _WATCH_FILLER]
+    return " ".join(terms), ptype
+
+
+def watch_matches(watch: dict, product: dict) -> bool:
+    """Does a product (or an event carrying product fields) satisfy a watch?"""
+    if watch.get("ptype") and product.get("ptype") != watch["ptype"]:
+        return False
+    if watch.get("store") and normalize(watch["store"]) not in normalize(product.get("store") or ""):
+        return False
+    price = product.get("price")
+    if watch.get("max_price") is not None and price is not None and price > watch["max_price"] + 0.005:
+        return False
+    padded = f" {normalize(product.get('title') or '')} "
+    return all(f" {t} " in padded for t in (watch.get("terms") or "").split())

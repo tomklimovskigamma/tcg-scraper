@@ -28,6 +28,14 @@ market prices and set release dates from tcgcsv.com; pings then carry a
 it with the Homebrew Python) posts a 90-day price chart. The prices are US
 market prices converted to AUD: a guide, not Australian resale value.
 
+**Specialist stores.** Gameology, Good Games and Cherry Collectables are read
+through `scrape_shopify.py --store <key>` every 15 minutes. Only new and hot
+sets ping there; the digest shows a count per shop.
+
+**Personal watches.** `python3 -m pipeline.watch add "delta reign etb" --under 80
+--asker <name>` (also `list`, `remove`). A matching arrival or price drop is
+posted with that person's mention. Ten per person.
+
 **Questions and quests.** `python3 -m pipeline.ask summary` (also `stock`,
 `product`, `set`, `market`, `events`, `quests`, `sql`) answers from the history,
 read-only. `python3 -m pipeline.quest "<question>" --asker <name>` sends qwen
@@ -43,7 +51,7 @@ ignored. The webhook URL is read from `discord_webhook.txt` (git-ignored) or
 
 ## Features
 
-- **Multi-retailer support**: JB Hi-Fi, Target, Kmart, Big W
+- **Multi-retailer support**: JB Hi-Fi, Target, Kmart, Big W, Gameology, Good Games, Cherry Collectables
 - **Real-time inventory tracking**: Monitor stock levels and prices
 - **Just-landed detection**: Get alerts when new items arrive
 - **Automated runs**: Scheduled checks with logging
@@ -134,6 +142,7 @@ tcg-scraper/
 ├── scrape_target.py          # Target scraper
 ├── scrape_kmart.py           # Kmart scraper
 ├── scrape_bigw.py            # Big W scraper
+├── scrape_shopify.py         # Gameology, Good Games, Cherry Collectables
 ├── run_all.py                # Orchestrator to run all scrapers
 ├── notify_discord.py         # Discord notification handler
 ├── README.md                 # This file

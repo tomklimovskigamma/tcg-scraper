@@ -30,13 +30,19 @@ DATA = ROOT / "data"
 LOG = ROOT / "pipeline.log"
 SCRAPER_TIMEOUT = 120
 
-# store label -> (scraper script, inventory file it writes)
+# store label -> (scraper command, inventory file it writes)
 STORES = {
-    "JB Hi-Fi": ("scrape_jbhifi.py", "inventory.json"),
-    "Target": ("scrape_target.py", "target_inventory.json"),
-    "Kmart": ("scrape_kmart.py", "kmart_inventory.json"),
-    "Big W": ("scrape_bigw.py", "bigw_inventory.json"),
+    "JB Hi-Fi": (["scrape_jbhifi.py", "--no-js"], "inventory.json"),
+    "Target": (["scrape_target.py", "--no-js"], "target_inventory.json"),
+    "Kmart": (["scrape_kmart.py", "--no-js"], "kmart_inventory.json"),
+    "Big W": (["scrape_bigw.py", "--no-js"], "bigw_inventory.json"),
+    "Gameology": (["scrape_shopify.py", "--store", "gameology"], "gameology_inventory.json"),
+    "Good Games": (["scrape_shopify.py", "--store", "goodgames"], "goodgames_inventory.json"),
+    "Cherry Collectables": (["scrape_shopify.py", "--store", "cherry"], "cherry_inventory.json"),
 }
+# Specialist shops: deep back-catalogue, so only new and hot sets ping, and we check less often.
+SPECIALIST = {"Gameology", "Good Games", "Cherry Collectables"}
+SPECIALIST_INTERVAL_MIN = 14  # with a 5-minute scan this means every 15 minutes
 
 
 def log(msg: str) -> None:
@@ -58,12 +64,12 @@ def read_inventory(store: str) -> Optional[list]:
 
 def scrape_store(store: str) -> Optional[list]:
     """Run one scraper. Returns its in-stock items, or None if it failed."""
-    script, filename = STORES[store]
+    command, filename = STORES[store]
     path = DATA / filename
     before = path.stat().st_mtime_ns if path.exists() else 0
     try:
-        proc = subprocess.run([sys.executable, str(ROOT / script), "--no-js"], cwd=str(ROOT), capture_output=True,
-                              text=True, timeout=SCRAPER_TIMEOUT)
+        proc = subprocess.run([sys.executable, str(ROOT / command[0])] + command[1:], cwd=str(ROOT),
+                              capture_output=True, text=True, timeout=SCRAPER_TIMEOUT)
     except subprocess.TimeoutExpired:
         log(f"scrape {store}: timed out after {SCRAPER_TIMEOUT}s")
         return None
@@ -79,34 +85,53 @@ def scrape_store(store: str) -> Optional[list]:
 
 
 def scan(history: History, stores: Iterable[str], scrape: Callable[[str], Optional[list]],
-         post: Optional[Callable[[str], None]], now: datetime, watchlist: Optional[Watchlist] = None) -> int:
+         post: Optional[Callable[[str], None]], now: datetime, watchlist: Optional[Watchlist] = None,
+         specialist: Iterable[str] = ()) -> int:
     """One scan cycle. `post=None` records events but sends nothing. Returns an exit code."""
     stores = list(stores)
-    ok = 0
+    specialist = set(specialist)
+    ok = tried = 0
     for store in stores:
+        if store in specialist:
+            age = history.minutes_since_run(store, now)
+            if age is not None and age < SPECIALIST_INTERVAL_MIN:
+                continue
+        tried += 1
         items = scrape(store)
         if items is None:
             history.record_failure(store, now)
             continue
         ok += 1
-        events = history.apply_scan(store, items, now, watchlist)
-        kinds = ", ".join(f"{e['kind']}:{e['sku']}" for e in events) or "no change"
-        log(f"scan {store}: {len(items)} listed; {kinds}")
-    if stores and ok == 0:
+        events = history.apply_scan(store, items, now, watchlist, specialist=store in specialist)
+        history.match_watches(events)
+        kinds = ", ".join(f"{e['kind']}:{e['sku']}" for e in events[:40]) or "no change"
+        log(f"scan {store}: {len(items)} listed; {len(events)} event(s): {kinds}")
+    if tried and ok == 0:
         print("All scrapers failed this run; see pipeline.log", file=sys.stderr)
         return 1
     if post is None:
         return 0
 
+    # One alert per event: a ping-tier arrival, a watched item, or both at once.
     pending = history.unposted_pings()
-    contexts = []
-    for e in pending:
+    hits = history.unposted_hits()
+    watchers = {}
+    for h in hits:
+        watchers.setdefault(h["event"]["id"], []).append(h)
+    entries = []
+    for e in pending + [h["event"] for h in hits]:
+        if any(e["id"] == done[0]["id"] for done in entries):
+            continue
         context = history.ping_context(e)
         context["market"] = history.market_value(e.get("set_name"), e.get("ptype"))
-        contexts.append((e, context))
-    batches = messages.build_pings(contexts)
+        mine = watchers.get(e["id"], [])
+        context["watchers"] = [h["watch"] for h in mine]
+        token = ([e["id"]] if e["tier"] == "ping" and e["kind"] == "appeared" else [], [h["hit_id"] for h in mine])
+        entries.append((e, context, token))
+    batches = messages.build_alerts(entries)
+    pending = entries
     sent = 0
-    for text, ids in batches:
+    for text, tokens in batches:
         try:
             post(text)
         except Exception as e:  # noqa: BLE001 - any failure means "retry next scan"
@@ -115,8 +140,9 @@ def scan(history: History, stores: Iterable[str], scrape: Callable[[str], Option
                   "will be retried next scan", file=sys.stderr)
             log(f"post failed: {type(e).__name__}{code}")
             return 1
-        history.mark_posted(ids)
-        sent += len(ids)
+        history.mark_posted([i for event_ids, _ in tokens for i in event_ids])
+        history.mark_hits_posted([i for _, hit_ids in tokens for i in hit_ids])
+        sent += len(tokens)
     if sent:
         print(f"Pinged {sent} item(s) in {len(batches)} message(s).")
         log(f"pinged {sent} item(s)")
@@ -131,7 +157,8 @@ def digest(history: History, post: Callable[[str], None], now: datetime) -> int:
     day_label = f"{local.strftime('%a')} {local.day} {local.strftime('%b')}"
     texts = messages.build_digest(day_label, history.events_between(start, end), history.in_stock_now(),
                                   history.run_stats(start, end), opportunities=history.opportunities(),
-                                  sets=history.set_calendar(now), hot_sets=history.hot_sets())
+                                  sets=history.set_calendar(now), hot_sets=history.hot_sets(),
+                                  specialist=SPECIALIST, watch_count=len(history.watches(everyone=True)))
     for text in texts:
         try:
             post(text)
@@ -180,7 +207,8 @@ def main(argv: Optional[list] = None) -> int:
     try:
         if args.command == "scan":
             scrape = read_inventory if args.no_scrape else scrape_store
-            return scan(history, STORES, scrape, post, now, load_watchlist(ROOT / "watchlist.txt"))
+            return scan(history, STORES, scrape, post, now, load_watchlist(ROOT / "watchlist.txt"),
+                        specialist=SPECIALIST)
         if args.command == "digest":
             return digest(history, post, now)
         if args.command == "market-sync":

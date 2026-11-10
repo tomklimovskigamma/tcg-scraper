@@ -10,12 +10,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
-from .classify import Watchlist, base_tier, classify, normalize
+from .classify import Watchlist, base_tier, classify, normalize, watch_matches
 
 NEW_SET_DAYS = 90
 TREND_DAYS = 30
 HOT_RISE = 0.10  # median 30-day rise that makes a set "hot"
 MISSES_UNTIL_GONE = 2
+MAX_WATCHES = 10  # active watches per person
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
@@ -49,6 +50,15 @@ CREATE TABLE IF NOT EXISTS fx (date TEXT PRIMARY KEY, usd_aud REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS quests (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, asker TEXT, question TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'running', finished TEXT, answer TEXT
+);
+CREATE TABLE IF NOT EXISTS watches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, asker TEXT, user_id TEXT,
+    text TEXT NOT NULL, terms TEXT NOT NULL, ptype TEXT, max_price REAL, store TEXT,
+    active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS watch_hits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, watch_id INTEGER NOT NULL, event_id INTEGER NOT NULL,
+    posted INTEGER NOT NULL DEFAULT 0, UNIQUE (watch_id, event_id)
 );
 """
 
@@ -97,9 +107,14 @@ class History:
             self.db.execute("INSERT INTO runs (ts, store, ok) VALUES (?, ?, 0)", (_iso(now), store))
 
     def apply_scan(self, store: str, items: Iterable[dict], now: datetime,
-                   watchlist: Optional[Watchlist] = None) -> list:
-        """Record one successful scrape of `store`; return the events it produced."""
+                   watchlist: Optional[Watchlist] = None, specialist: bool = False) -> list:
+        """Record one successful scrape of `store`; return the events it produced.
+
+        A `specialist` store carries deep back-catalogue at collector prices, so
+        only new and hot sets ping there; everything else is digest tier.
+        """
         wl = watchlist or Watchlist()
+        market_sets = self._query("SELECT set_key, set_name FROM market_sets")
         ts = _iso(now)
         new_ids = []
         with self.db:
@@ -120,13 +135,14 @@ class History:
                 if sku in seen:
                     continue
                 seen.add(sku)
-                tier = override or self._tier(c.ptype, c.set_name, now, baseline)
+                set_name = c.set_name or self._known_set(title, market_sets)
+                tier = override or self._tier(c.ptype, set_name, now, baseline, specialist)
                 price = _price(item)
                 preorder = str(item.get("status") or "").lower().startswith("pre")
                 row = self.db.execute(
                     "SELECT * FROM products WHERE store = ? AND sku = ?", (store, sku)).fetchone()
                 details = (title, item.get("url"), item.get("cart_url"), item.get("release_label") or None,
-                           c.ptype, c.set_name, tier)
+                           c.ptype, set_name, tier)
                 if row is None:
                     self.db.execute(
                         "INSERT INTO products (title, url, cart_url, release_label, ptype, set_name, tier, "
@@ -211,6 +227,70 @@ class History:
                 "GROUP BY store ORDER BY store", (_iso(start), _iso(end))):
             out[r["store"]] = {"ok": r["ok"], "failed": r["failed"]}
         return out
+
+    def minutes_since_run(self, store: str, now: datetime) -> Optional[float]:
+        row = self.db.execute("SELECT MAX(ts) FROM runs WHERE store = ?", (store,)).fetchone()
+        if not row or not row[0]:
+            return None
+        return (now - datetime.fromisoformat(row[0])).total_seconds() / 60
+
+    # ── personal watches ────────────────────────────────────────────────────
+    def add_watch(self, now: datetime, asker: Optional[str], user_id: Optional[str], text: str, terms: str,
+                  ptype: Optional[str], max_price: Optional[float], store: Optional[str]) -> int:
+        with self.db:
+            cur = self.db.execute(
+                "INSERT INTO watches (created, asker, user_id, text, terms, ptype, max_price, store) "
+                "VALUES (?,?,?,?,?,?,?,?)", (_iso(now), asker, user_id, text, terms, ptype, max_price, store))
+        return cur.lastrowid
+
+    def watches(self, asker: Optional[str] = None, user_id: Optional[str] = None, everyone: bool = False) -> list:
+        """Active watches: everyone's, or one person's (by Discord id when known, else by name)."""
+        rows = self._query("SELECT * FROM watches WHERE active = 1 ORDER BY id")
+        if everyone:
+            return rows
+        if user_id:
+            return [w for w in rows if w["user_id"] == user_id]
+        name = (asker or "").strip().casefold()
+        return [w for w in rows if not w["user_id"] and (w["asker"] or "").strip().casefold() == name]
+
+    def remove_watch(self, watch_id: int) -> None:
+        with self.db:
+            self.db.execute("UPDATE watches SET active = 0 WHERE id = ?", (watch_id,))
+
+    def match_watches(self, events: Iterable[dict]) -> int:
+        """Record a hit for every active watch that an arrival or price drop satisfies. Returns hits added."""
+        watches = self.watches(everyone=True)
+        added = 0
+        with self.db:
+            for e in events:
+                if e.get("baseline") or e["kind"] not in ("appeared", "price"):
+                    continue
+                if e["kind"] == "price" and not (e.get("old_price") is not None and e.get("price") is not None
+                                                  and e["price"] < e["old_price"]):
+                    continue
+                for w in watches:
+                    # A price drop only matters to someone who set a price ceiling.
+                    if e["kind"] == "price" and w["max_price"] is None:
+                        continue
+                    if watch_matches(w, e):
+                        cur = self.db.execute("INSERT OR IGNORE INTO watch_hits (watch_id, event_id) VALUES (?,?)",
+                                              (w["id"], e["id"]))
+                        added += cur.rowcount
+        return added
+
+    def unposted_hits(self) -> list:
+        """Unposted watch hits with their event and watch: [{hit_id, watch: {...}, event: {...}}]."""
+        out = []
+        for h in self._query("SELECT id, watch_id, event_id FROM watch_hits WHERE posted = 0 ORDER BY id"):
+            watch = self._query("SELECT * FROM watches WHERE id = ?", (h["watch_id"],))
+            event = self._events_by_id([h["event_id"]])
+            if watch and event and watch[0]["active"]:
+                out.append({"hit_id": h["id"], "watch": watch[0], "event": event[0]})
+        return out
+
+    def mark_hits_posted(self, ids: Iterable[int]) -> None:
+        with self.db:
+            self.db.executemany("UPDATE watch_hits SET posted = 1 WHERE id = ?", [(i,) for i in ids])
 
     # ── market prices (US market via TCGCSV) ────────────────────────────────
     def upsert_market_set(self, set_name: str, group_id: int, published_on: Optional[str]) -> None:
@@ -345,7 +425,18 @@ class History:
             (ptype,))
 
     # ── internals ───────────────────────────────────────────────────────────
-    def _tier(self, ptype: str, set_name: Optional[str], now: datetime, baseline: int) -> str:
+    @staticmethod
+    def _known_set(title: str, market_sets: list) -> Optional[str]:
+        """A set the market feed knows, named in a title that has no series marker. Longest name wins."""
+        padded = f" {normalize(title)} "
+        best = None
+        for s in market_sets:
+            if s["set_key"] and f" {s['set_key']} " in padded and (best is None or len(s["set_key"]) > len(best["set_key"])):
+                best = s
+        return best["set_name"] if best else None
+
+    def _tier(self, ptype: str, set_name: Optional[str], now: datetime, baseline: int,
+              specialist: bool = False) -> str:
         new_set = False
         if set_name:
             row = self.db.execute("SELECT first_seen, baseline FROM sets WHERE name = ?", (set_name,)).fetchone()
@@ -361,7 +452,9 @@ class History:
                 new_set = not baseline
             elif not row["baseline"]:
                 new_set = now - datetime.fromisoformat(row["first_seen"]) <= timedelta(days=NEW_SET_DAYS)
-        return "ping" if new_set or self.is_hot_set(set_name) else base_tier(ptype)
+        if new_set or self.is_hot_set(set_name):
+            return "ping"
+        return "digest" if specialist else base_tier(ptype)
 
     def _event(self, ts, store, sku, kind, label, tier, price, old_price=None, duration_min=None, baseline=0) -> int:
         cur = self.db.execute(

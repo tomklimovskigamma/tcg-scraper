@@ -28,6 +28,7 @@ from .classify import TYPE_LABELS, normalize
 from .history import History
 
 DB = Path(__file__).resolve().parent.parent / "data" / "history.db"
+STOCK_ROWS = 60  # specialist shops list hundreds of products
 MARKET_TYPES = ["booster_box", "etb", "booster_bundle", "booster", "sleeved_booster"]
 
 
@@ -132,10 +133,13 @@ def render(command: str, data, args) -> str:
     if command == "stock":
         if not data:
             return "Nothing matching is in stock."
+        shown = data[:STOCK_ROWS]
+        more = (f"\n... and {len(data) - len(shown)} more. Narrow it with a search text or --store."
+                if len(data) > len(shown) else "")
         return "\n".join(
             f"- {p['store']} | {TYPE_LABELS.get(p['ptype'], p['ptype'])} | {p['title']} | "
             f"A${p['price']:.2f} | {_market_text(p['market'], p['price'])} | {p['url'] or ''}"
-            if p["price"] is not None else f"- {p['store']} | {p['title']} | {p['url'] or ''}" for p in data)
+            if p["price"] is not None else f"- {p['store']} | {p['title']} | {p['url'] or ''}" for p in shown) + more
     if command == "product":
         if not data:
             return "No product matches."
