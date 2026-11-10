@@ -62,7 +62,7 @@ def scrape_store(store: str) -> Optional[list]:
     path = DATA / filename
     before = path.stat().st_mtime_ns if path.exists() else 0
     try:
-        proc = subprocess.run([sys.executable, str(ROOT / script)], cwd=str(ROOT), capture_output=True,
+        proc = subprocess.run([sys.executable, str(ROOT / script), "--no-js"], cwd=str(ROOT), capture_output=True,
                               text=True, timeout=SCRAPER_TIMEOUT)
     except subprocess.TimeoutExpired:
         log(f"scrape {store}: timed out after {SCRAPER_TIMEOUT}s")
@@ -130,7 +130,8 @@ def digest(history: History, post: Callable[[str], None], now: datetime) -> int:
     end = now.astimezone(timezone.utc) + timedelta(seconds=1)
     day_label = f"{local.strftime('%a')} {local.day} {local.strftime('%b')}"
     texts = messages.build_digest(day_label, history.events_between(start, end), history.in_stock_now(),
-                                  history.run_stats(start, end))
+                                  history.run_stats(start, end), opportunities=history.opportunities(),
+                                  sets=history.set_calendar(now), hot_sets=history.hot_sets())
     for text in texts:
         try:
             post(text)

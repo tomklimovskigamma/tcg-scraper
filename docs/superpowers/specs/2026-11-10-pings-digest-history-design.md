@@ -163,3 +163,33 @@ dollars**; every use is labelled as converted and as a guide only.
   sets, 90 days, dark theme, end labels, and the Australian shelf price as a
   reference line where the history has one. It needs matplotlib, so its
   wrapper runs the Homebrew Python; nothing else imports it.
+
+## Addendum 2 (same day): tying stock to the market, and questions from Discord
+
+Approved by Tom.
+
+- **Trend**: `market_value` carries the 30-day change of the US market price.
+  Ping and digest lines say "up 17% in 30 days", "down 6% in 30 days" or "flat
+  over 30 days" (under 3%).
+- **Hot sets**: a set whose product types have risen 10% or more (median) in
+  30 days is hot; all its products ping, tagged "🔥 hot set". It drops back
+  when the rise falls under 10%.
+- **Digest**: a "Best value on shelves" section ranks in-stock items whose
+  shelf price is 5% or more under the converted US market price (one line per
+  set and product type, cheapest store first, other stores noted), and a
+  "Sets to watch" section lists hot sets, sets released in the last 90 days
+  and sets due in the next 60.
+- **Questions** (`pipeline/ask.py`): a read-only command line over the history
+  (`summary`, `stock`, `product`, `set`, `market`, `events`, `quests`,
+  `schema`, `sql`). The database is opened read-only and `sql` accepts SELECT
+  only.
+- **Quests** (`pipeline/quest.py`): hands a question to qwen as a one-shot
+  Hermes agent limited to the `web` toolset (no shell, no files), with our
+  stock and market data as text in the prompt. Runs in the background, stores
+  question and answer in the `quests` table, and posts the answer through the
+  webhook. One at a time, ten per 24 hours, 15-minute limit, because the model
+  server is shared.
+- **Skill** (`skill/pokemon-stock/SKILL.md`, copied to
+  `~/clawd/skills/pokemon-stock/`): teaches the OpenClaw `@gamma-ai` bot to
+  answer from `pipeline.ask` and to start quests, with rules: label US prices,
+  never predict restocks, no investment advice.

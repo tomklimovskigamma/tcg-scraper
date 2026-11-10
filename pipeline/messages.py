@@ -80,18 +80,28 @@ def _pack(blocks, sep: str) -> list:
     return groups
 
 
+def _amount(v: float) -> str:
+    return f"{v:,.0f}" if v >= 20 else f"{v:,.2f}"
+
+
+def trend_phrase(change: Optional[float]) -> Optional[str]:
+    if change is None:
+        return None
+    if abs(change) < 0.03:
+        return "flat over 30 days"
+    return f"{'up' if change > 0 else 'down'} {abs(change):.0%} in 30 days"
+
+
 def market_line(shelf: Optional[float], market: Optional[dict]) -> Optional[str]:
     """Compare an Australian shelf price with the US market price. The US figure is only a guide."""
     if not market or market.get("usd") is None:
         return None
     usd, aud = market["usd"], market.get("aud")
-
-    def amount(v: float) -> str:
-        return f"{v:,.0f}" if v >= 20 else f"{v:,.2f}"
-
+    trend = trend_phrase(market.get("change_30d"))
+    tail = f", {trend}" if trend else ""
     if aud is None:
-        return f"US market ≈ US${amount(usd)}"
-    head = f"US market ≈ A${amount(aud)} (US${amount(usd)}, converted)"
+        return f"US market ≈ US${_amount(usd)}{tail}"
+    head = f"US market ≈ A${_amount(aud)} (US${_amount(usd)}, converted){tail}"
     if shelf is None or aud <= 0:
         return head
     diff = (shelf - aud) / aud
@@ -106,6 +116,7 @@ def format_ping(event: dict, context: dict) -> str:
         TYPE_LABELS.get(event.get("ptype"), "TCG"),
         f"**{money(event.get('price'))}**" if event.get("price") is not None else None,
         event.get("release_label") if event.get("label") == "preorder" else None,
+        "🔥 hot set" if context.get("hot") else None,
     ])
     where = _join([
         event["store"],
@@ -134,7 +145,14 @@ def build_pings(pings_with_context) -> list:
     return [("\n\n".join(blocks[i] for i in g), [ids[i] for i in g]) for g in _pack(blocks, "\n\n")]
 
 
-def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict) -> list:
+def _day(iso: str) -> str:
+    d = datetime.fromisoformat(iso[:10])
+    return f"{d.day} {d.strftime('%b')}"
+
+
+def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
+                 opportunities: Optional[list] = None, sets: Optional[list] = None,
+                 hot_sets: Optional[list] = None) -> list:
     lines = [f"📋 **Pokémon TCG daily digest · {day_label}**"]
     total_runs = sum(s["ok"] + s["failed"] for s in run_stats.values())
 
@@ -168,6 +186,17 @@ def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict) 
             lines.append("• " + _join([e["store"], short_title(e["title"]),
                                        f"{money(e.get('old_price'))} → {money(e.get('price'))}"]))
 
+    if opportunities:
+        lines += ["", f"**Best value on shelves ({len(opportunities)})**"]
+        for o in opportunities:
+            title = short_title(o["title"])
+            name = f"[{title}](<{o['url']}>)" if o.get("url") else title
+            market = f"{o['discount']:.0%} under US market (A${_amount(o['aud'])})"
+            trend = trend_phrase(o.get("change_30d"))
+            lines.append("• " + _join([name, f"{o['store']} {money(o['price'])}",
+                                       f"{market}, {trend}" if trend else market,
+                                       "also at " + ", ".join(o["also"]) if o.get("also") else None]))
+
     if in_stock:
         lines += ["", f"**In stock now ({len(in_stock)})**"]
         store = None
@@ -180,6 +209,16 @@ def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict) 
             lines.append("• " + _join([TYPE_LABELS.get(p.get("ptype"), "TCG"), name, money(p.get("price"))]))
     elif total_runs:
         lines += ["", "**In stock now (0)**"]
+
+    watch = [f"• 🔥 {name}: US market up 10% or more in 30 days, so every product pings" for name in hot_sets or []]
+    for c in sets or []:
+        if c["status"] == "released":
+            watch.append(f"• 🆕 {c['set_name']}: released {_day(c['date'])}, every product pings until "
+                         f"{_day(c['pings_until'])}")
+        else:
+            watch.append(f"• 📅 {c['set_name']}: releases {_day(c['date'])}")
+    if watch:
+        lines += ["", "**Sets to watch**"] + watch
 
     health = []
     for store, s in run_stats.items():
