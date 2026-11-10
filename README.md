@@ -40,6 +40,13 @@ market prices and set release dates from tcgcsv.com; pings then carry a
 it with the Homebrew Python) posts a 90-day price chart. The prices are US
 market prices converted to AUD: a guide, not Australian resale value.
 
+**Questions and quests.** `python3 -m pipeline.ask summary` (also `stock`,
+`product`, `set`, `market`, `events`, `quests`, `sql`) answers from the history,
+read-only. `python3 -m pipeline.quest "<question>" --asker <name>` sends qwen
+(a local model, web research only) to find out more and post the answer to the
+channel. `skill/pokemon-stock/SKILL.md` teaches the `@gamma-ai` Discord bot to
+use both; copy it to `~/clawd/skills/pokemon-stock/` after changing it.
+
 Edit `watchlist.txt` to force a product to always ping, never ping, or be
 ignored. The webhook URL is read from `discord_webhook.txt` (git-ignored) or
 `DISCORD_WEBHOOK_URL`. The scheduler wrappers are in `hermes/`; copy them to

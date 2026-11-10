@@ -13,6 +13,8 @@ from typing import Iterable, Optional, Union
 from .classify import Watchlist, base_tier, classify, normalize
 
 NEW_SET_DAYS = 90
+TREND_DAYS = 30
+HOT_RISE = 0.10  # median 30-day rise that makes a set "hot"
 MISSES_UNTIL_GONE = 2
 
 _SCHEMA = """
@@ -44,6 +46,10 @@ CREATE TABLE IF NOT EXISTS market_prices (
     date TEXT NOT NULL, product_id INTEGER NOT NULL, usd REAL NOT NULL, PRIMARY KEY (date, product_id)
 );
 CREATE TABLE IF NOT EXISTS fx (date TEXT PRIMARY KEY, usd_aud REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS quests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, asker TEXT, question TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running', finished TEXT, answer TEXT
+);
 """
 
 _EVENT_COLS = (
@@ -72,10 +78,14 @@ def _price(item: dict) -> Optional[float]:
 
 
 class History:
-    def __init__(self, path: Union[str, Path]):
-        self.db = sqlite3.connect(str(path))
+    def __init__(self, path: Union[str, Path], readonly: bool = False):
+        if readonly:
+            self.db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        else:
+            self.db = sqlite3.connect(str(path), timeout=30)
         self.db.row_factory = sqlite3.Row
-        self.db.executescript(_SCHEMA)
+        if not readonly:
+            self.db.executescript(_SCHEMA)
 
     def close(self) -> None:
         self.db.close()
@@ -179,7 +189,10 @@ class History:
         last = self.db.execute(
             "SELECT duration_min FROM events WHERE store=? AND sku=? AND kind='disappeared' AND ts <= ? "
             "ORDER BY id DESC LIMIT 1", (event["store"], event["sku"], event["ts"])).fetchone()
-        return {"times_30d": times, "last_duration_min": last[0] if last else None}
+        context = {"times_30d": times, "last_duration_min": last[0] if last else None}
+        if self.is_hot_set(event.get("set_name")):
+            context["hot"] = True
+        return context
 
     def events_between(self, start: datetime, end: datetime) -> list:
         return self._query(
@@ -242,18 +255,80 @@ class History:
         return row[0][:10] if row and row[0] else None
 
     def market_value(self, set_name: Optional[str], ptype: Optional[str]) -> Optional[dict]:
-        """Latest US market price for a set's product type; the cheapest variant when there are several."""
+        """Latest US market price for a set's product type (cheapest variant), with its 30-day change."""
         if not set_name or not ptype:
             return None
-        row = self.db.execute(
-            "SELECT mp.date, MIN(mp.usd) AS usd FROM market_prices mp "
-            "JOIN market_products p ON p.product_id = mp.product_id "
-            "WHERE p.set_key = ? AND p.ptype = ? GROUP BY mp.date ORDER BY mp.date DESC LIMIT 1",
-            (normalize(set_name), ptype)).fetchone()
+        sql = ("SELECT mp.date, MIN(mp.usd) AS usd FROM market_prices mp "
+               "JOIN market_products p ON p.product_id = mp.product_id "
+               "WHERE p.set_key = ? AND p.ptype = ? {extra} GROUP BY mp.date ORDER BY mp.date DESC LIMIT 1")
+        key = normalize(set_name)
+        row = self.db.execute(sql.format(extra=""), (key, ptype)).fetchone()
         if row is None:
             return None
+        cutoff = (datetime.fromisoformat(row["date"]).date() - timedelta(days=TREND_DAYS)).isoformat()
+        past = self.db.execute(sql.format(extra="AND mp.date <= ?"), (key, ptype, cutoff)).fetchone()
+        change = (row["usd"] - past["usd"]) / past["usd"] if past and past["usd"] else None
         fx = self.latest_fx()
-        return {"usd": row["usd"], "aud": round(row["usd"] * fx, 2) if fx else None, "date": row["date"]}
+        return {"usd": row["usd"], "aud": round(row["usd"] * fx, 2) if fx else None, "date": row["date"],
+                "change_30d": change}
+
+    def is_hot_set(self, set_name: Optional[str]) -> bool:
+        """True when the set's products have risen HOT_RISE or more (median) on the US market in 30 days."""
+        if not set_name:
+            return False
+        key = normalize(set_name)
+        changes = []
+        for (ptype,) in self.db.execute("SELECT DISTINCT ptype FROM market_products WHERE set_key = ?", (key,)).fetchall():
+            value = self.market_value(set_name, ptype)
+            if value and value["change_30d"] is not None:
+                changes.append(value["change_30d"])
+        if not changes:
+            return False
+        changes.sort()
+        mid = len(changes) // 2
+        median = changes[mid] if len(changes) % 2 else (changes[mid - 1] + changes[mid]) / 2
+        return median >= HOT_RISE
+
+    def hot_sets(self) -> list:
+        return [r["set_name"] for r in self._query("SELECT set_name FROM market_sets ORDER BY published_on DESC")
+                if self.is_hot_set(r["set_name"])]
+
+    def opportunities(self, limit: int = 8) -> list:
+        """In-stock items whose shelf price is at least 5% under the converted US market price, best first."""
+        out = []
+        for p in self.in_stock_now():
+            value = self.market_value(p.get("set_name"), p.get("ptype"))
+            if not value or not value.get("aud") or p.get("price") is None:
+                continue
+            discount = (value["aud"] - p["price"]) / value["aud"]
+            if discount >= 0.05:
+                out.append(dict(p, aud=value["aud"], usd=value["usd"], discount=discount,
+                                change_30d=value["change_30d"]))
+        out.sort(key=lambda o: o["discount"], reverse=True)
+        # One line per set + product type: keep the cheapest shelf, note the other stores.
+        best = {}
+        for o in out:
+            key = (normalize(o["set_name"]), o["ptype"])
+            if key in best:
+                if o["store"] != best[key]["store"] and o["store"] not in best[key]["also"]:
+                    best[key]["also"].append(o["store"])
+            else:
+                best[key] = dict(o, also=[])
+        return list(best.values())[:limit]
+
+    def set_calendar(self, now: datetime, ahead_days: int = 60) -> list:
+        """Sets released in the last NEW_SET_DAYS (status 'released') or due within `ahead_days` ('upcoming')."""
+        today = now.date()
+        out = []
+        for r in self._query("SELECT set_name, published_on FROM market_sets WHERE published_on IS NOT NULL "
+                             "ORDER BY published_on"):
+            released = datetime.fromisoformat(r["published_on"][:10]).date()
+            if today - timedelta(days=NEW_SET_DAYS) <= released <= today:
+                out.append({"set_name": r["set_name"], "status": "released", "date": released.isoformat(),
+                            "pings_until": (released + timedelta(days=NEW_SET_DAYS)).isoformat()})
+            elif today < released <= today + timedelta(days=ahead_days):
+                out.append({"set_name": r["set_name"], "status": "upcoming", "date": released.isoformat()})
+        return out
 
     def market_series(self, ptype: str, since: str) -> list:
         """One row per set per day: {date, set_name, published_on, usd} (cheapest variant)."""
@@ -286,7 +361,7 @@ class History:
                 new_set = not baseline
             elif not row["baseline"]:
                 new_set = now - datetime.fromisoformat(row["first_seen"]) <= timedelta(days=NEW_SET_DAYS)
-        return "ping" if new_set else base_tier(ptype)
+        return "ping" if new_set or self.is_hot_set(set_name) else base_tier(ptype)
 
     def _event(self, ts, store, sku, kind, label, tier, price, old_price=None, duration_min=None, baseline=0) -> int:
         cur = self.db.execute(
