@@ -19,6 +19,7 @@ _LABELS = {
     "restock": "🚨 **RESTOCK**",
     "new": "🆕 **NEW LISTING**",
     "preorder": "📅 **PRE-ORDER**",
+    "drop": "💸 **PRICE DROP**",
 }
 
 
@@ -110,11 +111,22 @@ def market_line(shelf: Optional[float], market: Optional[dict]) -> Optional[str]
     return f"{head} · shelf price is {abs(diff):.0%} {'below' if diff < 0 else 'above'}"
 
 
+def watcher_tag(watch: dict) -> str:
+    """Who to tell, and which of their watches matched."""
+    who = f"<@{watch['user_id']}>" if watch.get("user_id") else f"**{(watch.get('asker') or 'someone')[:40]}**"
+    limit = f" under {money(watch['max_price'])}" if watch.get("max_price") is not None else ""
+    return f"{who} (watching \"{watch['text'][:80]}\"{limit})"
+
+
 def format_ping(event: dict, context: dict) -> str:
+    drop = event.get("kind") == "price"
+    price = f"**{money(event.get('price'))}**" if event.get("price") is not None else None
+    if drop and price and event.get("old_price") is not None:
+        price = f"{money(event['old_price'])} → {price}"
     head = _join([
-        _LABELS.get(event.get("label"), _LABELS["restock"]),
+        _LABELS["drop"] if drop else _LABELS.get(event.get("label"), _LABELS["restock"]),
         TYPE_LABELS.get(event.get("ptype"), "TCG"),
-        f"**{money(event.get('price'))}**" if event.get("price") is not None else None,
+        price,
         event.get("release_label") if event.get("label") == "preorder" else None,
         "🔥 hot set" if context.get("hot") else None,
     ])
@@ -135,7 +147,16 @@ def format_ping(event: dict, context: dict) -> str:
     market = market_line(event.get("price"), context.get("market"))
     if market:
         lines.append(market)
+    if context.get("watchers"):
+        lines.append("👀 " + ", ".join(watcher_tag(w) for w in context["watchers"]))
     return "\n".join(lines)
+
+
+def build_alerts(entries) -> list:
+    """[(event, context, token)] -> [(message text, [tokens])]; `token` is whatever the caller
+    needs back to mark the entry as sent."""
+    blocks = [format_ping(e, c) for e, c, _ in entries]
+    return [("\n\n".join(blocks[i] for i in g), [entries[i][2] for i in g]) for g in _pack(blocks, "\n\n")]
 
 
 def build_pings(pings_with_context) -> list:
@@ -152,7 +173,8 @@ def _day(iso: str) -> str:
 
 def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
                  opportunities: Optional[list] = None, sets: Optional[list] = None,
-                 hot_sets: Optional[list] = None) -> list:
+                 hot_sets: Optional[list] = None, specialist: Optional[set] = None,
+                 watch_count: int = 0) -> list:
     lines = [f"📋 **Pokémon TCG daily digest · {day_label}**"]
     total_runs = sum(s["ok"] + s["failed"] for s in run_stats.values())
 
@@ -197,6 +219,14 @@ def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
                                        f"{market}, {trend}" if trend else market,
                                        "also at " + ", ".join(o["also"]) if o.get("also") else None]))
 
+    # Specialist shops hold hundreds of lines: count them rather than list them.
+    specialist = specialist or set()
+    special_counts = {}
+    for p in in_stock:
+        if p["store"] in specialist:
+            special_counts[p["store"]] = special_counts.get(p["store"], 0) + 1
+    in_stock = [p for p in in_stock if p["store"] not in specialist]
+
     if in_stock:
         lines += ["", f"**In stock now ({len(in_stock)})**"]
         store = None
@@ -209,6 +239,12 @@ def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
             lines.append("• " + _join([TYPE_LABELS.get(p.get("ptype"), "TCG"), name, money(p.get("price"))]))
     elif total_runs:
         lines += ["", "**In stock now (0)**"]
+    if special_counts:
+        lines += ["", "**Specialist stores**"]
+        lines += [f"• {store}: {n} products in stock" for store, n in sorted(special_counts.items())]
+        lines.append("Ask @gamma-ai what they have, or set a watch: \"@gamma-ai watch <product> under $<price>\"")
+    if watch_count:
+        lines += ["", f"👀 {watch_count} personal watch{'es' if watch_count != 1 else ''} active"]
 
     watch = [f"• 🔥 {name}: US market up 10% or more in 30 days, so every product pings" for name in hot_sets or []]
     for c in sets or []:

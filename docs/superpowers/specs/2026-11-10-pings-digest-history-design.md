@@ -193,3 +193,29 @@ Approved by Tom.
   `~/clawd/skills/pokemon-stock/`): teaches the OpenClaw `@gamma-ai` bot to
   answer from `pipeline.ask` and to start quests, with rules: label US prices,
   never predict restocks, no investment advice.
+
+## Addendum 3 (same day): specialist stores and personal watches
+
+Approved by Tom.
+
+- **Stores**: Gameology, Good Games and Cherry Collectables, through one
+  scraper (`scrape_shopify.py --store <key>`) that reads each shop's public
+  Shopify collection feed with the standard library. EB Games, Zing, Coles and
+  Toymate refuse automated requests and are not scraped; Toyworld lists no
+  card products online.
+- **Specialist rules**: these shops are scanned every 15 minutes, not 5. Their
+  stock is mostly older sets at collector prices, so only new and hot sets
+  ping there; everything else is digest tier. The digest gives one count per
+  specialist shop instead of listing hundreds of lines.
+- **Set names**: a title with no series marker now takes its set from the
+  market feed's set names when one appears in it.
+- **Watches** (`pipeline/watch.py`, tables `watches` and `watch_hits`): a
+  person names a product, optionally a price ceiling and a store. Each scan
+  matches arrivals, and price drops for watches with a ceiling, against active
+  watches; a match is posted once, in the same alert as the ping when there is
+  one, with the person's mention. Ten watches per person; a watch stays until
+  removed; baseline scans never alert, but `add` reports what is in stock now.
+- **Who is mentioned**: the Discord user id comes from the chat gateway's own
+  record of the latest message under the asker's name, never from the command
+  line, so a watch cannot be made to notify someone else. Only `<@id>` user
+  mentions are allowed through the webhook; @everyone and roles never notify.
