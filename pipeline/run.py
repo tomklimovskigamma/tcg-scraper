@@ -1,7 +1,10 @@
 """Command line entry: `python3 -m pipeline.run scan|digest [--dry-run] [--no-scrape]`.
 
-scan    run the scrapers, record history, post pings for high-demand arrivals
-digest  post the daily summary
+scan             run the scrapers, record history, post pings for high-demand arrivals
+digest           post the daily summary
+market-sync      fetch today's US market prices, release dates and exchange rate
+market-backfill  load ~90 days of weekly market prices from the archive (run once)
+market-chart     post the weekly market chart (needs matplotlib)
 
 --dry-run   work on a throwaway copy of the history and print instead of posting
 --no-scrape (scan only) read the existing data files instead of running scrapers
@@ -18,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from . import discord, messages
+from . import discord, market, messages
 from .classify import Watchlist, load_watchlist
 from .history import History
 
@@ -96,7 +99,12 @@ def scan(history: History, stores: Iterable[str], scrape: Callable[[str], Option
         return 0
 
     pending = history.unposted_pings()
-    batches = messages.build_pings([(e, history.ping_context(e)) for e in pending])
+    contexts = []
+    for e in pending:
+        context = history.ping_context(e)
+        context["market"] = history.market_value(e.get("set_name"), e.get("ptype"))
+        contexts.append((e, context))
+    batches = messages.build_pings(contexts)
     sent = 0
     for text, ids in batches:
         try:
@@ -139,7 +147,7 @@ def digest(history: History, post: Callable[[str], None], now: datetime) -> int:
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(prog="pipeline.run", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["scan", "digest"])
+    ap.add_argument("command", choices=["scan", "digest", "market-sync", "market-backfill", "market-chart"])
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-scrape", action="store_true")
     args = ap.parse_args(argv)
@@ -147,6 +155,7 @@ def main(argv: Optional[list] = None) -> int:
     DATA.mkdir(exist_ok=True)
     db_path = DATA / "history.db"
     tmp = None
+    url = ""
     if args.dry_run:
         tmp = tempfile.TemporaryDirectory()
         scratch = Path(tmp.name) / "history.db"
@@ -156,7 +165,7 @@ def main(argv: Optional[list] = None) -> int:
 
         def post(text: str) -> None:
             print(text + "\n" + "-" * 40)
-    else:
+    elif args.command in ("scan", "digest", "market-chart"):
         url = discord.webhook_url(ROOT)
         if not url:
             print("No Discord webhook URL (DISCORD_WEBHOOK_URL or discord_webhook.txt)", file=sys.stderr)
@@ -171,11 +180,50 @@ def main(argv: Optional[list] = None) -> int:
         if args.command == "scan":
             scrape = read_inventory if args.no_scrape else scrape_store
             return scan(history, STORES, scrape, post, now, load_watchlist(ROOT / "watchlist.txt"))
-        return digest(history, post, now)
+        if args.command == "digest":
+            return digest(history, post, now)
+        if args.command == "market-sync":
+            try:
+                stored = market.sync(history, now)
+            except Exception as e:  # noqa: BLE001
+                print(f"Market sync failed ({type(e).__name__}: {e})", file=sys.stderr)
+                log(f"market sync failed: {type(e).__name__}: {e}")
+                return 1
+            log(f"market sync: {stored} prices")
+            return 0 if stored else 1
+        if args.command == "market-backfill":
+            stored = market.backfill(history, market.weekly_dates(now, 13), log)
+            print(f"Backfilled {stored} prices.")
+            return 0
+        return market_chart(history, url, now, args.dry_run)
     finally:
         history.close()
         if tmp is not None:
             tmp.cleanup()
+
+
+def market_chart(history: History, url: str, now: datetime, dry_run: bool) -> int:
+    from . import chart  # imported here: only this command needs matplotlib
+
+    local = now.astimezone(messages.LOCAL_TZ) if messages.LOCAL_TZ else now.astimezone()
+    out = chart.render(history, DATA / "market-chart.png", local.date())
+    if out is None:
+        print("No market price data to chart; run market-sync first", file=sys.stderr)
+        return 1
+    text = chart.caption(history, local.date())
+    if dry_run:
+        print(text + f"\n[chart written to {out}]")
+        return 0
+    try:
+        discord.post_file(url, text, out, "pokemon-market.png")
+    except Exception as e:  # noqa: BLE001
+        code = f" {e.code}" if hasattr(e, "code") else ""
+        print(f"Discord post failed ({type(e).__name__}{code}); chart not sent", file=sys.stderr)
+        log(f"chart post failed: {type(e).__name__}{code}")
+        return 1
+    print("Market chart posted.")
+    log("market chart posted")
+    return 0
 
 
 if __name__ == "__main__":

@@ -140,3 +140,26 @@ and does not mark events as posted.
 `run_and_post.sh`, `post_found_items.py` and `seen_items.txt` are replaced by
 the pipeline. The first scan is a silent baseline. Scheduler wrappers are kept
 in `hermes/` and copied to `~/.hermes/scripts/`.
+
+## Addendum (same day): market prices, release dates, weekly chart
+
+Approved by Tom after the first build. Source: TCGCSV (tcgcsv.com), a community
+mirror of TCGplayer data refreshed once a day. It is a **US market in US
+dollars**; every use is labelled as converted and as a guide only.
+
+- `pipeline/market.py` fetches, once a day (07:40), the groups, products and
+  prices for main-series sets released in the last 500 days, plus the USD to
+  AUD rate (frankfurter.dev). Only the plain `<Set> Booster Box`, `Elite
+  Trainer Box`, `Booster Bundle`, `Booster Pack` and `Sleeved Booster Pack`
+  products are kept. Thirteen weekly points were backfilled once from the
+  TCGCSV archive.
+- **Ping line**: when a pinged item's set and type match a market product, the
+  ping ends with `US market ≈ A$106 (US$70, converted) · shelf price is 25% below`.
+- **New-set rule**: a set with a known release date is new for 90 days after
+  release (unreleased sets count as new). The first-seen rule remains the
+  fallback for sets the feed does not know.
+- **Weekly chart** (`pipeline/chart.py`, Sundays 19:30): four small panels
+  (booster box, ETB, bundle, pack), one line per set for the three newest
+  sets, 90 days, dark theme, end labels, and the Australian shelf price as a
+  reference line where the history has one. It needs matplotlib, so its
+  wrapper runs the Homebrew Python; nothing else imports it.

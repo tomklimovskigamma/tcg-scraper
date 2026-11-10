@@ -80,6 +80,26 @@ def _pack(blocks, sep: str) -> list:
     return groups
 
 
+def market_line(shelf: Optional[float], market: Optional[dict]) -> Optional[str]:
+    """Compare an Australian shelf price with the US market price. The US figure is only a guide."""
+    if not market or market.get("usd") is None:
+        return None
+    usd, aud = market["usd"], market.get("aud")
+
+    def amount(v: float) -> str:
+        return f"{v:,.0f}" if v >= 20 else f"{v:,.2f}"
+
+    if aud is None:
+        return f"US market ≈ US${amount(usd)}"
+    head = f"US market ≈ A${amount(aud)} (US${amount(usd)}, converted)"
+    if shelf is None or aud <= 0:
+        return head
+    diff = (shelf - aud) / aud
+    if abs(diff) < 0.05:
+        return f"{head} · shelf price is about the same"
+    return f"{head} · shelf price is {abs(diff):.0%} {'below' if diff < 0 else 'above'}"
+
+
 def format_ping(event: dict, context: dict) -> str:
     head = _join([
         _LABELS.get(event.get("label"), _LABELS["restock"]),
@@ -101,6 +121,9 @@ def format_ping(event: dict, context: dict) -> str:
     ])
     if history:
         lines.append(history)
+    market = market_line(event.get("price"), context.get("market"))
+    if market:
+        lines.append(market)
     return "\n".join(lines)
 
 

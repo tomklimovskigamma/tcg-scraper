@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
-from .classify import Watchlist, base_tier, classify
+from .classify import Watchlist, base_tier, classify, normalize
 
 NEW_SET_DAYS = 90
 MISSES_UNTIL_GONE = 2
@@ -36,6 +36,14 @@ CREATE INDEX IF NOT EXISTS events_product ON events (store, sku, ts);
 CREATE TABLE IF NOT EXISTS sets (name TEXT PRIMARY KEY, first_seen TEXT, baseline INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS runs (ts TEXT NOT NULL, store TEXT NOT NULL, ok INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS runs_store ON runs (store, ts);
+CREATE TABLE IF NOT EXISTS market_sets (set_key TEXT PRIMARY KEY, set_name TEXT, group_id INTEGER, published_on TEXT);
+CREATE TABLE IF NOT EXISTS market_products (
+    product_id INTEGER PRIMARY KEY, group_id INTEGER, set_key TEXT, name TEXT, ptype TEXT, url TEXT
+);
+CREATE TABLE IF NOT EXISTS market_prices (
+    date TEXT NOT NULL, product_id INTEGER NOT NULL, usd REAL NOT NULL, PRIMARY KEY (date, product_id)
+);
+CREATE TABLE IF NOT EXISTS fx (date TEXT PRIMARY KEY, usd_aud REAL NOT NULL);
 """
 
 _EVENT_COLS = (
@@ -191,6 +199,76 @@ class History:
             out[r["store"]] = {"ok": r["ok"], "failed": r["failed"]}
         return out
 
+    # ── market prices (US market via TCGCSV) ────────────────────────────────
+    def upsert_market_set(self, set_name: str, group_id: int, published_on: Optional[str]) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO market_sets (set_key, set_name, group_id, published_on) VALUES (?,?,?,?) "
+                "ON CONFLICT(set_key) DO UPDATE SET set_name=excluded.set_name, group_id=excluded.group_id, "
+                "published_on=excluded.published_on", (normalize(set_name), set_name, group_id, published_on))
+
+    def upsert_market_product(self, product_id: int, group_id: int, set_name: str, name: str, ptype: str,
+                              url: Optional[str]) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO market_products (product_id, group_id, set_key, name, ptype, url) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(product_id) DO UPDATE SET group_id=excluded.group_id, set_key=excluded.set_key, "
+                "name=excluded.name, ptype=excluded.ptype, url=excluded.url",
+                (product_id, group_id, normalize(set_name), name, ptype, url))
+
+    def add_market_price(self, date: str, product_id: int, usd: float) -> None:
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO market_prices (date, product_id, usd) VALUES (?,?,?)",
+                            (date, product_id, round(float(usd), 2)))
+
+    def market_product_ids(self, group_id: int) -> list:
+        return [r[0] for r in self.db.execute(
+            "SELECT product_id FROM market_products WHERE group_id = ?", (group_id,))]
+
+    def set_fx(self, date: str, usd_aud: float) -> None:
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO fx (date, usd_aud) VALUES (?,?)", (date, float(usd_aud)))
+
+    def latest_fx(self) -> Optional[float]:
+        row = self.db.execute("SELECT usd_aud FROM fx ORDER BY date DESC LIMIT 1").fetchone()
+        return row[0] if row else None
+
+    def set_release(self, set_name: Optional[str]) -> Optional[str]:
+        """Release date (YYYY-MM-DD) of a set, when the market feed knows it."""
+        if not set_name:
+            return None
+        row = self.db.execute("SELECT published_on FROM market_sets WHERE set_key = ?",
+                              (normalize(set_name),)).fetchone()
+        return row[0][:10] if row and row[0] else None
+
+    def market_value(self, set_name: Optional[str], ptype: Optional[str]) -> Optional[dict]:
+        """Latest US market price for a set's product type; the cheapest variant when there are several."""
+        if not set_name or not ptype:
+            return None
+        row = self.db.execute(
+            "SELECT mp.date, MIN(mp.usd) AS usd FROM market_prices mp "
+            "JOIN market_products p ON p.product_id = mp.product_id "
+            "WHERE p.set_key = ? AND p.ptype = ? GROUP BY mp.date ORDER BY mp.date DESC LIMIT 1",
+            (normalize(set_name), ptype)).fetchone()
+        if row is None:
+            return None
+        fx = self.latest_fx()
+        return {"usd": row["usd"], "aud": round(row["usd"] * fx, 2) if fx else None, "date": row["date"]}
+
+    def market_series(self, ptype: str, since: str) -> list:
+        """One row per set per day: {date, set_name, published_on, usd} (cheapest variant)."""
+        return self._query(
+            "SELECT mp.date, s.set_name, s.published_on, MIN(mp.usd) AS usd FROM market_prices mp "
+            "JOIN market_products p ON p.product_id = mp.product_id "
+            "JOIN market_sets s ON s.set_key = p.set_key "
+            "WHERE p.ptype = ? AND mp.date >= ? GROUP BY mp.date, s.set_key ORDER BY mp.date", (ptype, since))
+
+    def shelf_prices(self, ptype: str) -> list:
+        """Australian shelf prices we have seen for a product type: {set_name, price}."""
+        return self._query(
+            "SELECT set_name, price FROM products WHERE ptype = ? AND price IS NOT NULL AND set_name IS NOT NULL",
+            (ptype,))
+
     # ── internals ───────────────────────────────────────────────────────────
     def _tier(self, ptype: str, set_name: Optional[str], now: datetime, baseline: int) -> str:
         new_set = False
@@ -199,6 +277,12 @@ class History:
             if row is None:
                 self.db.execute("INSERT INTO sets (name, first_seen, baseline) VALUES (?, ?, ?)",
                                 (set_name, _iso(now), baseline))
+            released = self.set_release(set_name)
+            if released:
+                # A real release date beats our own first sighting. Unreleased sets count as new.
+                age = now.date() - datetime.fromisoformat(released).date()
+                new_set = age <= timedelta(days=NEW_SET_DAYS)
+            elif row is None:
                 new_set = not baseline
             elif not row["baseline"]:
                 new_set = now - datetime.fromisoformat(row["first_seen"]) <= timedelta(days=NEW_SET_DAYS)

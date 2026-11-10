@@ -34,6 +34,12 @@ python3 -m pipeline.run scan --dry-run    # print instead of posting; history un
 python3 -m unittest discover -s tests -p 'test_[chmr]*.py'
 ```
 
+**Market prices.** `python3 -m pipeline.run market-sync` (daily) stores US
+market prices and set release dates from tcgcsv.com; pings then carry a
+"US market ≈ A$…" line, and `market-chart` (Sundays, needs matplotlib, so run
+it with the Homebrew Python) posts a 90-day price chart. The prices are US
+market prices converted to AUD: a guide, not Australian resale value.
+
 Edit `watchlist.txt` to force a product to always ping, never ping, or be
 ignored. The webhook URL is read from `discord_webhook.txt` (git-ignored) or
 `DISCORD_WEBHOOK_URL`. The scheduler wrappers are in `hermes/`; copy them to
