@@ -1,0 +1,13 @@
+# Overrides for the stock alert rules. One per line, matched anywhere in the
+# product title (case and accents ignored). Changes apply on the next scan.
+#
+#   always: <keyword>   always send an instant ping
+#   never: <keyword>    never ping; the item still appears in the daily digest
+#   ignore: <keyword>   drop the item completely
+#
+# If several match, ignore wins over never, and never wins over always.
+#
+# Examples (remove the leading "# " to switch one on):
+# always: prismatic evolutions
+# never: deck crafter
+# ignore: japanese

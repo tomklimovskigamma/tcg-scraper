@@ -14,6 +14,32 @@ The dashboard shows real-time inventory from all retailers, updated hourly. You 
 - Retailer comparison
 - Historical data trends
 
+## Alerts: pings, daily digest and history
+
+The scrapers feed a small pipeline (`pipeline/`) that needs no LLM:
+
+- **Instant pings** for products that sell out (booster boxes, Elite Trainer
+  Boxes, bundles, collections, tins, and anything from a set first seen in the
+  last 90 days), with price, a RESTOCK / NEW LISTING / PRE-ORDER label and
+  restock history.
+- **A daily digest** at 19:00 with the day's arrivals, sell-outs, price changes,
+  current stock and scraper health.
+- **A history log** in `data/history.db` (SQLite) of every appearance,
+  disappearance and price change.
+
+```bash
+python3 -m pipeline.run scan              # scrape, record, post pings
+python3 -m pipeline.run digest            # post the daily digest
+python3 -m pipeline.run scan --dry-run    # print instead of posting; history untouched
+python3 -m unittest discover -s tests -p 'test_[chmr]*.py'
+```
+
+Edit `watchlist.txt` to force a product to always ping, never ping, or be
+ignored. The webhook URL is read from `discord_webhook.txt` (git-ignored) or
+`DISCORD_WEBHOOK_URL`. The scheduler wrappers are in `hermes/`; copy them to
+`~/.hermes/scripts/` after changing them. Design:
+`docs/superpowers/specs/2026-11-10-pings-digest-history-design.md`.
+
 ## Features
 
 - **Multi-retailer support**: JB Hi-Fi, Target, Kmart, Big W
