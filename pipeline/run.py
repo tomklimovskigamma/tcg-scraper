@@ -62,7 +62,7 @@ def scrape_store(store: str) -> Optional[list]:
     path = DATA / filename
     before = path.stat().st_mtime_ns if path.exists() else 0
     try:
-        proc = subprocess.run([sys.executable, str(ROOT / script)], cwd=str(ROOT), capture_output=True,
+        proc = subprocess.run([sys.executable, str(ROOT / script), "--no-js"], cwd=str(ROOT), capture_output=True,
                               text=True, timeout=SCRAPER_TIMEOUT)
     except subprocess.TimeoutExpired:
         log(f"scrape {store}: timed out after {SCRAPER_TIMEOUT}s")

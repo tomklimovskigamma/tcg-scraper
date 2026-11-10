@@ -2,18 +2,6 @@
 
 A Python-based scraper for monitoring Pokémon Trading Card Game (TCG) inventory across major Australian retailers.
 
-## 🚀 Live Demo
-
-🌐 **Live Dashboard:** https://toms-mac-mini.tailb83730.ts.net/
-
-**Dashboard Name:** TCG Scraper Dashboard
-
-The dashboard shows real-time inventory from all retailers, updated hourly. You can see:
-- Current in-stock items
-- Prices and availability
-- Retailer comparison
-- Historical data trends
-
 ## Alerts: pings, daily digest and history
 
 The scrapers feed a small pipeline (`pipeline/`) that needs no LLM:
@@ -60,10 +48,6 @@ ignored. The webhook URL is read from `discord_webhook.txt` (git-ignored) or
 - **Just-landed detection**: Get alerts when new items arrive
 - **Automated runs**: Scheduled checks with logging
 - **Discord integration**: Notifications for new stock
-- **Web dashboard**: Real-time inventory visualization
-  - **Dashboard Name**: TCG Scraper Dashboard
-  - **Live URL**: https://toms-mac-mini.tailb83730.ts.net/
-  - **Local File**: `tcg_scraper_dashboard.html`
 
 ## Retailers Covered
 
@@ -127,11 +111,6 @@ python scrape_bigw.py
 python notify_discord.py
 ```
 
-### View dashboard:
-- **Local**: Open `tcg_scraper_dashboard.html` in your browser
-- **Live**: Visit https://toms-mac-mini.tailb83730.ts.net/
-- **Note**: The dashboard has been renamed from `dashboard.html` to `tcg_scraper_dashboard.html` for clarity
-
 ### Schedule automated runs:
 Add to crontab for hourly checks:
 ```bash
@@ -144,7 +123,6 @@ Note: The script now automatically logs to `/Users/tomklimovski/clawd/run_log.tx
 
 The scraper generates:
 - `data/` directory with retailer-specific JSON files
-- `dashboard.html` with real-time inventory visualization
 - Discord notifications for new stock
 
 ## Project Structure
@@ -158,10 +136,6 @@ tcg-scraper/
 ├── scrape_bigw.py            # Big W scraper
 ├── run_all.py                # Orchestrator to run all scrapers
 ├── notify_discord.py         # Discord notification handler
-├── tcg_scraper_dashboard.html # Web dashboard (live at https://toms-mac-mini.tailb83730.ts.net/)
-├── tcg_scraper_dashboard.css  # Dashboard styles
-├── tcg_scraper_dashboard.js   # Dashboard JavaScript
-├── index.html                # Symlink to tcg_scraper_dashboard.html
 ├── README.md                 # This file
 ├── requirements.txt          # Python dependencies
 ├── .gitignore               # Git ignore rules
@@ -232,7 +206,7 @@ For questions or support, open an issue on GitHub.
 
 ## Recent Updates (April 2026)
 
-1. **Dashboard Rename** - Changed from `dashboard.html` to `tcg_scraper_dashboard.html` for clarity
+1. **Dashboard retired (November 2026)** - The web dashboard and its tailnet link were removed; the Discord digest replaces it
 2. **Schedule Update** - Changed from 9am-5pm to **7am-5pm** runs
 3. **Recently Added Section** - Changed "Just Landed" to "Recently Added (Last 12 Hours)"
 4. **Fixed notification logic** - Now supports `--include-in-stock` flag

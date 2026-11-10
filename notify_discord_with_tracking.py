@@ -201,7 +201,6 @@ def send_discord(webhook_url: str, items: list[dict], include_in_stock: bool = F
         content = f"🚨 **{n} new Pokémon TCG item{'s' if n != 1 else ''} just landed!**"
     
     # Add dashboard link
-    content += f"\n📊 **Dashboard:** https://toms-mac-mini.tailb83730.ts.net/"
     
     total_message_length += len(content)
     
