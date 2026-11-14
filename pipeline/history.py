@@ -215,6 +215,11 @@ class History:
             f"SELECT {_EVENT_COLS} FROM events e JOIN products p ON p.store = e.store AND p.sku = e.sku "
             "WHERE e.baseline = 0 AND e.ts >= ? AND e.ts < ? ORDER BY e.id", (_iso(start), _iso(end)))
 
+    def stock_count(self, store: str) -> int:
+        """How many products the history holds as in stock at `store`."""
+        return self.db.execute("SELECT COUNT(*) FROM products WHERE store=? AND in_stock=1",
+                               (store,)).fetchone()[0]
+
     def in_stock_now(self) -> list:
         return self._query(
             "SELECT store, sku, title, url, cart_url, ptype, set_name, tier, price, since FROM products "

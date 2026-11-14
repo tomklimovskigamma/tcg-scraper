@@ -7,4 +7,4 @@ set -u
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 unset VIRTUAL_ENV PYTHONPATH PYTHONHOME PYTHONNOUSERSITE
 cd /Users/tomklimovski/clawd/tcg-scraper || exit 1
-exec /usr/bin/python3 -m pipeline.run scan
+exec /usr/bin/python3 -m pipeline.run scan --quiet

@@ -8,6 +8,8 @@ market-chart     post the weekly market chart (needs matplotlib)
 
 --dry-run   work on a throwaway copy of the history and print instead of posting
 --no-scrape (scan only) read the existing data files instead of running scrapers
+--quiet     (scan only) post only personal-watch alerts; other arrivals wait for the digest
+--days N    (digest only) cover the last N days instead of today
 """
 from __future__ import annotations
 
@@ -86,8 +88,9 @@ def scrape_store(store: str) -> Optional[list]:
 
 def scan(history: History, stores: Iterable[str], scrape: Callable[[str], Optional[list]],
          post: Optional[Callable[[str], None]], now: datetime, watchlist: Optional[Watchlist] = None,
-         specialist: Iterable[str] = ()) -> int:
-    """One scan cycle. `post=None` records events but sends nothing. Returns an exit code."""
+         specialist: Iterable[str] = (), quiet: bool = False) -> int:
+    """One scan cycle. `post=None` records events but sends nothing. `quiet` sends only
+    personal-watch alerts; other arrivals wait for the digest. Returns an exit code."""
     stores = list(stores)
     specialist = set(specialist)
     ok = tried = 0
@@ -98,7 +101,10 @@ def scan(history: History, stores: Iterable[str], scrape: Callable[[str], Option
                 continue
         tried += 1
         items = scrape(store)
-        if items is None:
+        # A store that had stock and now lists nothing was almost certainly refused, not emptied.
+        if items is None or (not items and history.stock_count(store)):
+            if items is not None:
+                log(f"scan {store}: listed nothing while stock is on record; counted as a failed run")
             history.record_failure(store, now)
             continue
         ok += 1
@@ -114,6 +120,9 @@ def scan(history: History, stores: Iterable[str], scrape: Callable[[str], Option
 
     # One alert per event: a ping-tier arrival, a watched item, or both at once.
     pending = history.unposted_pings()
+    if quiet:
+        history.mark_posted([e["id"] for e in pending])
+        pending = []
     hits = history.unposted_hits()
     watchers = {}
     for h in hits:
@@ -149,16 +158,20 @@ def scan(history: History, stores: Iterable[str], scrape: Callable[[str], Option
     return 0
 
 
-def digest(history: History, post: Callable[[str], None], now: datetime) -> int:
-    """Post the summary of the local day that `now` falls in. Returns an exit code."""
+def digest(history: History, post: Callable[[str], None], now: datetime, days: int = 1) -> int:
+    """Post the summary of the last `days` local days, ending with the one `now` falls in."""
     local = now.astimezone(messages.LOCAL_TZ) if messages.LOCAL_TZ else now.astimezone()
-    start = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    first = local.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=max(days, 1) - 1)
+    start = first.astimezone(timezone.utc)
     end = now.astimezone(timezone.utc) + timedelta(seconds=1)
     day_label = f"{local.strftime('%a')} {local.day} {local.strftime('%b')}"
+    if days > 1:
+        day_label = f"{first.strftime('%a')} {first.day} {first.strftime('%b')} to {day_label}"
     texts = messages.build_digest(day_label, history.events_between(start, end), history.in_stock_now(),
                                   history.run_stats(start, end), opportunities=history.opportunities(),
                                   sets=history.set_calendar(now), hot_sets=history.hot_sets(),
-                                  specialist=SPECIALIST, watch_count=len(history.watches(everyone=True)))
+                                  specialist=SPECIALIST, watch_count=len(history.watches(everyone=True)),
+                                  days=days)
     for text in texts:
         try:
             post(text)
@@ -178,6 +191,9 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("command", choices=["scan", "digest", "market-sync", "market-backfill", "market-chart"])
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-scrape", action="store_true")
+    ap.add_argument("--quiet", action="store_true",
+                    help="(scan) post only personal-watch alerts; everything else waits for the digest")
+    ap.add_argument("--days", type=int, default=1, help="(digest) how many days to cover")
     args = ap.parse_args(argv)
 
     DATA.mkdir(exist_ok=True)
@@ -208,9 +224,9 @@ def main(argv: Optional[list] = None) -> int:
         if args.command == "scan":
             scrape = read_inventory if args.no_scrape else scrape_store
             return scan(history, STORES, scrape, post, now, load_watchlist(ROOT / "watchlist.txt"),
-                        specialist=SPECIALIST)
+                        specialist=SPECIALIST, quiet=args.quiet)
         if args.command == "digest":
-            return digest(history, post, now)
+            return digest(history, post, now, days=args.days)
         if args.command == "market-sync":
             try:
                 stored = market.sync(history, now)

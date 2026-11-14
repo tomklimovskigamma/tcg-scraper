@@ -219,3 +219,14 @@ Approved by Tom.
   record of the latest message under the asker's name, never from the command
   line, so a watch cannot be made to notify someone else. Only `<@id>` user
   mentions are allowed through the webhook; @everyone and roles never notify.
+
+## Addendum 4 (2026-11-14): quiet mode
+
+Tom found the channel too noisy. The scan now runs hourly with `--quiet`: it
+records history and posts only personal-watch alerts. The digest runs every
+third day with `--days 3` in a compact layout: new listings still in stock,
+price drops, counts per store, each list capped at eight lines. A store that
+lists nothing while the history holds stock for it counts as a failed run,
+because JB Hi-Fi returned empty pages when it rate-limited us and every
+recovery looked like a restock. Running without the two flags restores the
+old behaviour.

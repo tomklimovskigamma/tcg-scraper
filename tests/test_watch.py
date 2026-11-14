@@ -143,6 +143,42 @@ class SpecialistTests(unittest.TestCase):
         self.assertIn("2 personal watches active", text)
 
 
+class QuietModeTests(unittest.TestCase):
+    def setUp(self):
+        self.h = History(":memory:")
+        self.sent = []
+
+    def tearDown(self):
+        self.h.close()
+
+    def test_quiet_scan_posts_nothing_and_does_not_replay_later(self):
+        etb = {"sku": "1", "title": "Pokemon TCG: Mega Evolution Chaos Rising Elite Trainer Box", "price_aud": 79.0}
+        run.scan(self.h, ["Big W"], lambda s: [], self.sent.append, NOW)
+        run.scan(self.h, ["Big W"], lambda s: [etb], self.sent.append, later(5), quiet=True)
+        self.assertEqual(self.sent, [])
+        run.scan(self.h, ["Big W"], lambda s: [etb], self.sent.append, later(10))
+        self.assertEqual(self.sent, [])
+
+    def test_empty_listing_from_a_stocked_store_is_a_failed_run(self):
+        etb = {"sku": "1", "title": "Pokemon TCG: Mega Evolution Chaos Rising Elite Trainer Box", "price_aud": 79.0}
+        run.scan(self.h, ["Big W"], lambda s: [etb], None, NOW)
+        for m in (5, 10, 15):
+            run.scan(self.h, ["Big W"], lambda s: [], None, later(m))
+        self.assertEqual(self.h.stock_count("Big W"), 1)
+
+    def test_multi_day_digest_lists_each_product_once(self):
+        def ev(kind, ts, **kw):
+            return dict({"kind": kind, "ts": ts, "store": "JB Hi-Fi", "sku": "1", "title": "Pokemon TCG: X Booster Box",
+                         "price": 100.0, "in_stock": 1}, **kw)
+        events = [ev("appeared", "2026-11-12T01:00:00+00:00"), ev("disappeared", "2026-11-12T02:00:00+00:00"),
+                  ev("appeared", "2026-11-13T01:00:00+00:00")]
+        text = "\n".join(messages.build_digest("Thu 12 Nov to Sat 14 Nov", events, [], {"JB Hi-Fi": {"ok": 3, "failed": 0}},
+                                               days=3))
+        self.assertIn("3-day digest", text)
+        self.assertEqual(text.count("X Booster Box"), 1)
+        self.assertNotIn("today", text)
+
+
 class ShopifyScraperTests(unittest.TestCase):
     def test_only_buyable_variants_count_and_category_marks_tcg(self):
         products = [
