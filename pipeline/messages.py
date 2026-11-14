@@ -52,6 +52,11 @@ def local_time(ts: str) -> str:
     return (dt.astimezone(LOCAL_TZ) if LOCAL_TZ else dt.astimezone()).strftime("%H:%M")
 
 
+def local_date(ts: str) -> str:
+    dt = datetime.fromisoformat(ts)
+    return (dt.astimezone(LOCAL_TZ) if LOCAL_TZ else dt.astimezone()).strftime("%Y-%m-%d")
+
+
 _PREFIX = re.compile(r"^pok[eé]mon\s+(?:tcg|trading card game)\s*[:\-\u2013\u2014]\s*", re.IGNORECASE)
 _SUFFIX = re.compile(r"\s*(?:-\s*assorted)?\s*\*?\s*$", re.IGNORECASE)
 
@@ -171,11 +176,53 @@ def _day(iso: str) -> str:
     return f"{d.day} {d.strftime('%b')}"
 
 
+COMPACT_ROWS = 8
+
+
+def _compact_changes(arrived: list, gone: list, prices: list) -> list:
+    """Multi-day digest: one line per product, only what is still true at the end of the period."""
+    lines = []
+    latest = {}
+    for e in arrived:
+        latest[(e["store"], e["sku"])] = e
+    here = [e for e in latest.values() if e.get("in_stock")]
+    kept = [e for e in here if e.get("label") != "restock"]
+    kept.sort(key=lambda e: e["ts"], reverse=True)
+    if kept:
+        lines += ["", f"**New listings still in stock ({len(kept)})**"]
+        for e in kept[:COMPACT_ROWS]:
+            lines.append("• " + _join([_day(local_date(e["ts"])), e["store"], short_title(e["title"]),
+                                       money(e.get("price"))]))
+        if len(kept) > COMPACT_ROWS:
+            lines.append(f"…and {len(kept) - COMPACT_ROWS} more")
+    back = len(here) - len(kept)
+    passed = len(latest) - len(here)
+    if back or passed:
+        lines += ["", _join([f"{back} restocked and still in stock" if back else None,
+                             f"{passed} came and went" if passed else None])]
+    net = {}
+    for e in prices:
+        key = (e["store"], e["sku"])
+        first = net[key]["old_price"] if key in net else e.get("old_price")
+        net[key] = dict(e, old_price=first)
+    moved = [e for e in net.values() if e.get("in_stock") and e.get("old_price") and e.get("price")
+             and e["price"] < e["old_price"]]
+    moved.sort(key=lambda e: e["price"] / e["old_price"])
+    if moved:
+        lines += ["", f"**Price drops ({len(moved)})**"]
+        for e in moved[:COMPACT_ROWS]:
+            lines.append("• " + _join([e["store"], short_title(e["title"]),
+                                       f"{money(e['old_price'])} → {money(e['price'])}"]))
+        if len(moved) > COMPACT_ROWS:
+            lines.append(f"…and {len(moved) - COMPACT_ROWS} more")
+    return lines
+
+
 def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
                  opportunities: Optional[list] = None, sets: Optional[list] = None,
                  hot_sets: Optional[list] = None, specialist: Optional[set] = None,
-                 watch_count: int = 0) -> list:
-    lines = [f"📋 **Pokémon TCG daily digest · {day_label}**"]
+                 watch_count: int = 0, days: int = 1) -> list:
+    lines = [f"📋 **Pokémon TCG {'daily digest' if days <= 1 else f'{days}-day digest'} · {day_label}**"]
     total_runs = sum(s["ok"] + s["failed"] for s in run_stats.values())
 
     arrived = [e for e in events if e["kind"] == "appeared"]
@@ -183,12 +230,16 @@ def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
     prices = [e for e in events if e["kind"] == "price"]
     gone_by_product = {(e["store"], e["sku"]): e for e in gone}
 
+    compact = days > 1
+    when = "in this period" if compact else "today"
     if total_runs == 0:
-        lines += ["", "⚠️ No scrapes ran today, so there is nothing to report."]
+        lines += ["", f"⚠️ No scrapes ran {when}, so there is nothing to report."]
     elif not (arrived or gone or prices):
-        lines += ["", "Nothing arrived, sold out or changed price today."]
+        lines += ["", f"Nothing arrived, sold out or changed price {when}."]
 
-    if arrived:
+    if compact:
+        lines += _compact_changes(arrived, gone, prices)
+    elif arrived:
         lines += ["", f"**Arrived today ({len(arrived)})**"]
         for e in arrived:
             left = gone_by_product.get((e["store"], e["sku"]))
@@ -197,12 +248,12 @@ def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
             else:
                 fate = "still in stock" if e.get("in_stock") else "gone"
             lines.append("• " + _join([local_time(e["ts"]), e["store"], short_title(e["title"]), money(e.get("price")), fate]))
-    if gone:
+    if gone and not compact:
         lines += ["", f"**Sold out today ({len(gone)})**"]
         for e in gone:
             lines.append("• " + _join([local_time(e["ts"]), e["store"], short_title(e["title"]),
                                        f"lasted {duration(e.get('duration_min'))}"]))
-    if prices:
+    if prices and not compact:
         lines += ["", f"**Price changes ({len(prices)})**"]
         for e in prices:
             lines.append("• " + _join([e["store"], short_title(e["title"]),
@@ -227,7 +278,13 @@ def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
             special_counts[p["store"]] = special_counts.get(p["store"], 0) + 1
     in_stock = [p for p in in_stock if p["store"] not in specialist]
 
-    if in_stock:
+    if compact and in_stock:
+        counts = {}
+        for p in in_stock:
+            counts[p["store"]] = counts.get(p["store"], 0) + 1
+        lines += ["", f"**In stock now ({len(in_stock)})**",
+                  " · ".join(f"{store} {n}" for store, n in sorted(counts.items()))]
+    elif in_stock:
         lines += ["", f"**In stock now ({len(in_stock)})**"]
         store = None
         for p in in_stock:
@@ -246,11 +303,12 @@ def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
     if watch_count:
         lines += ["", f"👀 {watch_count} personal watch{'es' if watch_count != 1 else ''} active"]
 
-    watch = [f"• 🔥 {name}: US market up 10% or more in 30 days, so every product pings" for name in hot_sets or []]
+    pings = "" if compact else ", so every product pings"
+    watch = [f"• 🔥 {name}: US market up 10% or more in 30 days{pings}" for name in hot_sets or []]
     for c in sets or []:
         if c["status"] == "released":
-            watch.append(f"• 🆕 {c['set_name']}: released {_day(c['date'])}, every product pings until "
-                         f"{_day(c['pings_until'])}")
+            watch.append(f"• 🆕 {c['set_name']}: released {_day(c['date'])}" +
+                         ("" if compact else f", every product pings until {_day(c['pings_until'])}"))
         else:
             watch.append(f"• 📅 {c['set_name']}: releases {_day(c['date'])}")
     if watch:
@@ -260,8 +318,8 @@ def build_digest(day_label: str, events: list, in_stock: list, run_stats: dict,
     for store, s in run_stats.items():
         total = s["ok"] + s["failed"]
         if s["failed"] and not s["ok"]:
-            health.append(f"⚠️ {store}: every scrape failed today ({total})")
-        elif s["failed"]:
+            health.append(f"⚠️ {store}: every scrape failed {when} ({total})")
+        elif s["failed"] and (not compact or s["failed"] * 10 >= total):
             health.append(f"⚠️ {store}: {s['failed']} of {total} scrapes failed")
     if health:
         lines += [""] + health
